@@ -96,6 +96,31 @@ const API = {
   },
   async summarizeStatus() {
     return (await fetch('/api/summarize/status')).json();
+  },
+  // ── Settings (cloud keys + privacy). The API key travels only in the save/
+  // test request body over the session — it is never echoed back or stored
+  // client-side (no localStorage / no State).
+  async settingsGet() {
+    return (await fetch('/api/settings')).json();
+  },
+  async settingsPrivacy(allowCloud, ack) {
+    return (await fetch('/api/settings/privacy', { method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ allow_cloud: allowCloud, ack: !!ack }) })).json();
+  },
+  async settingsSaveKey(provider, apiKey) {
+    return (await fetch('/api/settings/keys/' + encodeURIComponent(provider), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ api_key: apiKey }) })).json();
+  },
+  async settingsDeleteKey(provider) {
+    return (await fetch('/api/settings/keys/' + encodeURIComponent(provider), {
+      method:'DELETE' })).json();
+  },
+  async settingsTestKey(provider, apiKey) {
+    return (await fetch('/api/settings/keys/' + encodeURIComponent(provider) + '/test', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(apiKey ? { api_key: apiKey } : {}) })).json();
   }
 };
 
@@ -1391,12 +1416,234 @@ const EngineSelector = {
         if (onlinePill)  { onlinePill.disabled  = true; }
         if (offlinePill) { offlinePill.disabled = true; }
       }
+      // Privacy (Local only): online is off BY POLICY — say why, not "no internet",
+      // and point at the Settings screen where the mode can be changed.
+      if (s.local_only) {
+        badge.className = 'engine-status-badge engine-status-offline';
+        txt.textContent = t('engine_local_only') || '🔒 Local only — offline translation (see Settings)';
+        if (onlinePill) {
+          onlinePill.disabled = true;
+          onlinePill.title = t('settings_local_only_keys') || 'Local only mode — change in Settings';
+        }
+      }
     } catch(e) {
       badge.className = 'engine-status-badge engine-status-none';
       txt.textContent = t('engine_status_error');
     }
     this._probing = false;
   }
+};
+
+// ── Settings view (cloud API keys + privacy) ───────────────────────────────
+// Keys are handled write-only: typed into a password field, sent once to the
+// backend (OS credential store), input cleared. Only masked hints ("••••abcd")
+// ever come back. Nothing here touches localStorage or State.
+const SettingsView = {
+  _data: null,
+  _names: { groq: 'Groq', gemini: 'Google Gemini' },
+
+  init() { this._inited = true; },
+
+  async show() {
+    try {
+      this._data = await API.settingsGet();
+    } catch (e) {
+      Toast.show(t('settings_load_failed') || 'Could not load settings.', 'error');
+      return;
+    }
+    if (!this._data || !this._data.success) {
+      Toast.show(t('settings_load_failed') || 'Could not load settings.', 'error');
+      return;
+    }
+    this._renderPrivacy();
+    this._renderProviders();
+  },
+
+  _renderPrivacy() {
+    const p = this._data.privacy || {};
+    const badge = document.getElementById('settings-privacy-badge');
+    const txt = document.getElementById('settings-privacy-text');
+    const btn = document.getElementById('settings-privacy-toggle');
+    const note = document.getElementById('settings-privacy-note');
+    const local = p.processing_mode === 'local_only';
+    badge.className = 'engine-status-badge ' +
+      (local ? 'engine-status-offline' : 'engine-status-online');
+    txt.textContent = local
+      ? (t('settings_mode_local') || '🔒 Local only — nothing is sent to the cloud')
+      : (t('settings_mode_cloud') || '☁ Cloud processing allowed');
+    btn.disabled = !!p.env_locked;
+    btn.textContent = local
+      ? (t('settings_enable_cloud') || 'Allow cloud processing…')
+      : (t('settings_disable_cloud') || 'Switch to Local only');
+    note.textContent = p.env_locked
+      ? (t('settings_env_locked') || 'Set by ALLOW_CLOUD in .env — remove it there to control this here.')
+      : '';
+    btn.onclick = () => this._togglePrivacy(!local);
+  },
+
+  async _togglePrivacy(enableCloud) {
+    const p = (this._data && this._data.privacy) || {};
+    if (enableCloud && !p.cloud_ack) {
+      // First-time confirmation (UI item 2): explain what leaves the machine.
+      const msg = p.ack_message || 'Document text and prompts may be sent to the configured cloud provider. Continue?';
+      if (!window.confirm(msg)) return;
+    }
+    const res = await API.settingsPrivacy(enableCloud, enableCloud);
+    if (res && res.success) {
+      this._data = res;
+      this._renderPrivacy();
+      this._renderProviders();
+      Toast.show(enableCloud
+        ? (t('settings_cloud_on') || 'Cloud processing allowed.')
+        : (t('settings_cloud_off') || 'Local only enabled — nothing leaves this machine.'),
+        'success');
+    } else {
+      Toast.show((res && (res.error || res.message)) ||
+        t('settings_save_failed') || 'Could not save the setting.', 'error');
+    }
+  },
+
+  _stateBadge(state, detail) {
+    const map = {
+      not_configured: ['engine-status-none', t('settings_state_none') || 'Not configured'],
+      configured: ['engine-status-all', t('settings_state_configured') || 'Configured'],
+      testing: ['engine-status-checking', t('settings_state_testing') || 'Testing…'],
+      connected: ['engine-status-online', t('settings_state_connected') || 'Connected'],
+      invalid: ['engine-status-none', t('settings_state_invalid') || 'Invalid key'],
+      error: ['engine-status-none', t('settings_state_error') || 'Unreachable'],
+      unavailable: ['engine-status-none', t('settings_state_unavailable') || 'Credential store unavailable'],
+      blocked: ['engine-status-offline', t('settings_state_blocked') || 'Local only'],
+    };
+    const [cls, label] = map[state] || map.not_configured;
+    const span = document.createElement('span');
+    span.className = 'engine-status-badge ' + cls;
+    span.setAttribute('role', 'status');
+    const dot = document.createElement('span'); dot.className = 'status-dot';
+    span.appendChild(dot);
+    span.appendChild(document.createTextNode(' ' + label + (detail ? ' — ' + detail : '')));
+    return span;
+  },
+
+  _renderProviders() {
+    const wrap = document.getElementById('settings-providers');
+    const kr = this._data.keyring || {};
+    const localOnly = (this._data.privacy || {}).processing_mode === 'local_only';
+    const warn = document.getElementById('settings-keyring-warn');
+    if (!kr.available) {
+      warn.style.display = '';
+      warn.textContent = (t('settings_keyring_unavailable') ||
+        'The OS credential store is unavailable — keys cannot be saved here. ') +
+        '(' + (kr.backend || '') + ')';
+    } else {
+      warn.style.display = 'none';
+    }
+    wrap.innerHTML = '';
+    (this._data.providers || []).forEach((prov) => {
+      wrap.appendChild(this._providerRow(prov, kr.available, localOnly));
+    });
+  },
+
+  _providerRow(prov, keyringOk, localOnly) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' +
+      'padding:10px 0;border-top:1px solid var(--border)';
+    const name = document.createElement('b');
+    name.style.cssText = 'flex:0 0 130px';
+    name.textContent = this._names[prov.provider] || prov.provider;
+    row.appendChild(name);
+
+    const state = document.createElement('span');
+    state.id = 'settings-state-' + prov.provider;
+    state.appendChild(this._stateBadge(
+      localOnly ? 'blocked' : (prov.configured ? 'configured' : 'not_configured'),
+      prov.configured ? (prov.masked +
+        (prov.source === 'env' ? ' · ' + (t('settings_from_env') || 'from .env') : '')) : ''));
+    row.appendChild(state);
+
+    const input = document.createElement('input');
+    input.type = 'password';                       // masked; never a text field
+    input.autocomplete = 'off';
+    input.id = 'settings-key-' + prov.provider;
+    input.placeholder = prov.configured
+      ? (t('settings_key_replace') || 'Enter a new key to replace…')
+      : (t('settings_key_enter') || 'Paste API key…');
+    input.setAttribute('aria-label', (this._names[prov.provider] || prov.provider) + ' API key');
+    input.style.cssText = 'flex:1;min-width:200px;background:var(--card2);' +
+      'border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:inherit';
+    row.appendChild(input);
+
+    const mkBtn = (label, cls, onclick, disabled, title) => {
+      const b = document.createElement('button');
+      b.className = 'btn ' + cls + ' btn-sm';
+      b.textContent = label;
+      b.disabled = !!disabled;
+      if (title) b.title = title;
+      b.addEventListener('click', onclick);
+      row.appendChild(b);
+      return b;
+    };
+    const localMsg = t('settings_local_only_keys') ||
+      'Local only is enabled — cloud keys are not used or validated in this mode.';
+    const envLocked = prov.source === 'env';
+    const envMsg = t('settings_env_key') ||
+      'This key comes from .env and wins over a stored key.';
+    mkBtn(t('settings_btn_save') || 'Save', 'btn-primary',
+      () => this._saveKey(prov.provider, input),
+      localOnly || !keyringOk || envLocked,
+      localOnly ? localMsg : (!keyringOk ? (t('settings_state_unavailable') || 'Credential store unavailable')
+                              : (envLocked ? envMsg : '')));
+    mkBtn(t('settings_btn_test') || 'Test', 'btn-ghost',
+      () => this._testKey(prov.provider, input), localOnly,
+      localOnly ? localMsg : '');
+    mkBtn(t('settings_btn_remove') || 'Remove', 'btn-ghost',
+      () => this._removeKey(prov.provider),
+      !prov.configured || envLocked, envLocked ? envMsg : '');
+    return row;
+  },
+
+  _setState(provider, state, detail) {
+    const holder = document.getElementById('settings-state-' + provider);
+    if (holder) {
+      holder.innerHTML = '';
+      holder.appendChild(this._stateBadge(state, detail));
+    }
+  },
+
+  async _saveKey(provider, input) {
+    const key = (input.value || '').trim();
+    if (!key) { Toast.show(t('settings_key_required') || 'Enter an API key first.', 'error'); return; }
+    const res = await API.settingsSaveKey(provider, key);
+    input.value = '';                              // never keep the key around
+    if (res && res.success) {
+      this._setState(provider, 'configured', res.provider && res.provider.masked);
+      Toast.show(t('settings_key_saved') || 'Key stored in the OS credential store.', 'success');
+      this.show();                                 // refresh masked hints/buttons
+    } else {
+      this._setState(provider, (res && res.state) || 'error');
+      Toast.show((res && res.error) || t('settings_save_failed') || 'Could not save the key.', 'error');
+    }
+  },
+
+  async _testKey(provider, input) {
+    this._setState(provider, 'testing');
+    const typed = (input.value || '').trim();
+    const res = await API.settingsTestKey(provider, typed || null);
+    const state = (res && res.state) || 'error';
+    this._setState(provider, state, res && res.detail);
+    Toast.show((res && res.detail) || '', state === 'connected' ? 'success' : 'error');
+  },
+
+  async _removeKey(provider) {
+    if (!window.confirm(t('settings_key_remove_confirm') ||
+        'Remove the stored API key for this provider?')) return;
+    const res = await API.settingsDeleteKey(provider);
+    if (res && res.success) {
+      Toast.show(t('settings_key_removed') || 'Key removed.', 'success');
+      this.show();
+    } else {
+      Toast.show((res && res.error) || t('settings_save_failed') || 'Could not remove the key.', 'error');
+    }
+  },
 };
 
 // Swap languages
@@ -1755,11 +2002,13 @@ document.addEventListener('DOMContentLoaded', () => {
                                 // here was breaking Documents → OCR restore
     if (name === 'documents') DocumentsView.show();
     if (name === 'ocr') OCRView._resetMode();
+    if (name === 'settings') SettingsView.show();
   };
 
   // Register views
-  ['home','ocr','correct','translate','summarize','documents','chat'].forEach(name =>
+  ['home','ocr','correct','translate','summarize','documents','chat','settings'].forEach(name =>
     Router.register(name, document.getElementById(`view-${name}`)));
+  SettingsView.init();
 
   // Nav links
   document.querySelectorAll('.nav-link').forEach(l =>

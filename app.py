@@ -78,10 +78,23 @@ def _too_large(e):
     return jsonify({"success": False,
                     "error": f"File too large (max {cfg.MAX_UPLOAD_MB} MB)."}), 413
 
+from settings_bp import settings_bp    # cloud keys (OS credential store) + privacy
+
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(chat_bp)
 app.register_blueprint(agent_bp)       # Phase 5: additive Agent HTTP surface
+app.register_blueprint(settings_bp)
+
+# Apply persisted non-secret settings (Local only / Allow cloud) and mirror
+# keyring-stored API keys into this process's env — env vars set externally
+# always win (developer / backward-compatible configuration). Never raises.
+from services import settings_store as _settings_store, secret_store as _secret_store
+_settings_store.apply_persisted_settings()
+try:
+    _secret_store.load_into_env()
+except Exception:
+    pass                                  # keyring is optional
 
 
 # ── Display timezone (admin templates) ───────────────────────────────────────
@@ -815,6 +828,11 @@ def llm_status():
             # UI/desktop shell can show whether cloud AI/translation is in play.
             "allow_cloud": cfg.ALLOW_CLOUD,
             "processing_mode": "cloud_allowed" if cfg.ALLOW_CLOUD else "local_only",
+            # For the first-cloud-use confirmation: is any cloud key configured,
+            # and has the user already acknowledged cloud processing?
+            "cloud_keys_configured": any(
+                _secret_store.get_key(p) for p in _secret_store.PROVIDERS),
+            "cloud_ack": _settings_store.get_cloud_ack(),
             "profile":  cfg.LOCAL_LLM_PROFILE,
             "enabled":  {"chat": cfg.ENABLE_CHAT, "agent": cfg.ENABLE_AGENT,
                          "rewrite": cfg.ENABLE_REWRITE},

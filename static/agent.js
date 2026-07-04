@@ -39,6 +39,7 @@
       });
       if (prev) selectDoc(prev);
     } catch (e) { /* handled by api() */ }
+    updateScopeLine();
   }
 
   // Select a document by file_id; if it isn't in the list (e.g. a brand-new upload
@@ -51,9 +52,47 @@
       o.value = fileId; o.textContent = label || "Attached document";
       sel.appendChild(o); sel.value = fileId;
     }
+    updateScopeLine();
   }
 
   function setUploadStatus(html) { $("agent-upload-status").innerHTML = html || ""; }
+
+  // ── Active scope (UI item 4): shown next to Run + on each result turn ───────
+  function scopeLabel() {
+    const sel = $("agent-doc");
+    const fid = (sel && sel.value || "").trim();
+    if (fid && sel.selectedOptions[0]) {
+      return "📄 " + sel.selectedOptions[0].textContent + " only";
+    }
+    return "📚 entire document library";
+  }
+
+  function updateScopeLine() {
+    const el = $("agent-scope");
+    if (el) el.textContent = "Scope: " + scopeLabel();
+  }
+
+  // Copy-to-clipboard with execCommand fallback (mirrors app.js pattern —
+  // agent page is standalone and does not load app.js).
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) { /* fall through */ }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  // Non-secret preference: remember the user's max-steps choice (UI item 7).
+  const STEPS_STORE_KEY = "smartdocs_agent_steps";
 
   // Resolve the OCR engine for a request via the backend (single source of truth
   // for the routing rules). Falls back to GLM if the lookup fails.
@@ -339,16 +378,32 @@
     renderTurnArtifacts(div, meta.artifacts);          // files + "View Result" links
     const calls = (meta.skill_calls || []).map((n) => "🧩 " + n)
       .concat((meta.tool_calls || []).map((n) => "🔧 " + n));
-    if (calls.length || meta.status) {
+    const flags = meta.flags || [];              // e.g. scope / coverage notes
+    const wantCopy = role !== "user" && (content || "").trim();
+    if (calls.length || meta.status || flags.length || wantCopy) {
       const chips = document.createElement("div"); chips.className = "chips";
       if (meta.status) {
         const c = document.createElement("span"); c.className = "chip"; c.textContent = meta.status;
         chips.appendChild(c);
       }
+      flags.forEach((x) => {
+        const c = document.createElement("span"); c.className = "chip"; c.textContent = x;
+        chips.appendChild(c);
+      });
       calls.forEach((x) => {
         const c = document.createElement("span"); c.className = "chip"; c.textContent = x;
         chips.appendChild(c);
       });
+      if (wantCopy) {                            // Copy Result (UI item 6)
+        const b = document.createElement("button");
+        b.className = "hbtn"; b.textContent = "📋 Copy";
+        b.title = "Copy this answer to the clipboard";
+        b.addEventListener("click", async () => {
+          b.textContent = (await copyText(content)) ? "Copied ✓" : "Copy failed";
+          setTimeout(() => { b.textContent = "📋 Copy"; }, 1600);
+        });
+        chips.appendChild(b);
+      }
       div.appendChild(chips);
     }
     const t = $("transcript");
@@ -425,15 +480,43 @@
     if (body.plan) { planEl.textContent = "Plan: " + body.plan; planEl.style.display = "block"; }
     else { planEl.textContent = ""; planEl.style.display = "none"; }
 
+    // Citations (UI item 6): document NAME + excerpt, clickable into the source
+    // viewer. Names/routes come from the run's own result destinations (server-
+    // resolved, ownership-checked) — never from anything the client invents.
+    const byFid = {};
+    (body.results || []).forEach((r) => {
+      if (r.file_id && r.route) {
+        byFid[r.file_id] = { route: r.route,
+          name: (r.label || r.file_id).replace(/^[^·]*·\s*/, "") };
+      }
+    });
     const cwrap = $("run-citations-wrap"), cul = $("run-citations"); cul.innerHTML = "";
     const cites = body.citations || [];
     cites.forEach((c) => {
       const li = document.createElement("li");
+      const dest = byFid[c.file_id];
       const b = document.createElement("b");
-      b.textContent = c.file_id + (c.score != null ? "  ·  " + c.score : "");
+      b.textContent = "📄 " + ((dest && dest.name) || c.file_id) +
+        (c.score != null ? "  ·  " + c.score : "");
       const s = document.createElement("span"); s.textContent = c.excerpt || "";
-      li.appendChild(b); li.appendChild(s); cul.appendChild(li);
+      li.appendChild(b); li.appendChild(s);
+      if (dest) {
+        li.style.cursor = "pointer";
+        li.title = "Open this source document";
+        li.setAttribute("role", "link"); li.tabIndex = 0;
+        const open = () => { window.location.href = "/" + dest.route; };
+        li.addEventListener("click", open);
+        li.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+      }
+      cul.appendChild(li);
     });
+    if (cites.length && body.context_truncated) {
+      const note = document.createElement("li");
+      note.className = "muted small";
+      note.textContent = "⚠ The attached document was longer than the context " +
+        "window — the answer may not cover all of it.";
+      cul.appendChild(note);
+    }
     cwrap.style.display = cites.length ? "block" : "none";
 
     // OCR engine for this request (shown only when the request actually involved OCR).
@@ -462,10 +545,60 @@
     return "Running…";
   }
 
+  // Last submitted run, so a failed one can be retried as-is (UI item 5).
+  let lastRun = null;
+
+  // One-time confirmation before the FIRST cloud-processing request (UI item 2):
+  // only when cloud is allowed AND a cloud key is actually configured AND the
+  // user has never acknowledged it. Accepting persists the ack server-side.
+  async function confirmCloudIfNeeded() {
+    const s = llmStatus;
+    if (!s || s.processing_mode !== "cloud_allowed"
+          || !s.cloud_keys_configured || s.cloud_ack) return true;
+    const ok = window.confirm(
+      "This run may send document text, retrieval excerpts and your prompt to " +
+      "the configured cloud provider (e.g. Groq or Gemini).\n\nContinue? " +
+      "(You can switch to Local only in Settings at any time.)");
+    if (!ok) {
+      const st = $("run-status");
+      st.textContent = "Run cancelled — nothing was sent. ";
+      st.appendChild(settingsLink());
+      return false;
+    }
+    try {
+      await api("/api/settings/privacy", { method: "PUT",
+        body: JSON.stringify({ allow_cloud: true, ack: true }) });
+      llmStatus.cloud_ack = true;
+    } catch (e) { /* ack persistence is best-effort; the user already agreed */ }
+    return true;
+  }
+
+  // Failure state with a real Retry (UI item 5) — restores the exact last run.
+  function offerRetry(errText) {
+    const st = $("run-status");
+    st.innerHTML = "";
+    const s = document.createElement("span");
+    s.className = "bad"; s.textContent = errText + " ";
+    st.appendChild(s);
+    const b = document.createElement("button");
+    b.className = "hbtn"; b.textContent = "↻ Retry";
+    b.addEventListener("click", () => {
+      if (lastRun) {
+        $("msg").value = lastRun.message;
+        $("steps").value = lastRun.maxSteps;
+        if (lastRun.fileId) selectDoc(lastRun.fileId, lastRun.fileName);
+      }
+      runAgent();
+    });
+    st.appendChild(b);
+  }
+
   async function runAgent() {
     const message = $("msg").value.trim();
     if (!message) { $("run-status").textContent = "Enter a request first."; return; }
+    if (!(await confirmCloudIfNeeded())) return;
     const max_steps = parseInt($("steps").value, 10) || 3;
+    try { localStorage.setItem(STEPS_STORE_KEY, String(max_steps)); } catch (e) { /* optional */ }
     $("run").disabled = true;
     $("run-status").textContent = "Running… (loading the local model on first run can take a moment)";
     // Source file shown on the user turn (file_id resolved internally; only the
@@ -475,6 +608,9 @@
     const fileName = fileId && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : "";
     const userArtifacts = fileId
       ? [{ kind: "source", file_id: fileId, route: "#ocr/" + fileId, label: fileName }] : [];
+    const scopeAtRun = scopeLabel();               // shown on the result (item 4)
+    lastRun = { message, fileId, fileName, maxSteps: max_steps };
+    const runStart = Date.now();
     appendTurn("user", message, { artifacts: userArtifacts });   // optimistic echo
     $("msg").value = "";
     // Progress feedback: an opaque run id lets us poll the run's current phase
@@ -484,11 +620,14 @@
     let polling = true;
     const poller = setInterval(async () => {
       if (!polling) return;
+      const secs = Math.round((Date.now() - runStart) / 1000);
       try {
         const { body } = await api("/api/agent/progress/" + encodeURIComponent(runId));
         const p = body && body.progress;
         if (polling && p && p.phase && p.phase !== "done") {
-          $("run-status").textContent = progressText(p);
+          $("run-status").textContent = progressText(p) + " · " + secs + "s";
+        } else if (polling) {
+          $("run-status").textContent = "Running… (" + secs + "s)";
         }
       } catch (e) { /* progress is optional */ }
     }, 1200);
@@ -510,7 +649,14 @@
           await openSession(conversationId);
           loadSessions();
         }
-        $("run-status").innerHTML = '<span class="bad">Error: ' + (body.error || "failed") + "</span>";
+        if (body.disabled) {                     // config problem — Settings, not Retry
+          const st = $("run-status");
+          st.innerHTML = '<span class="bad"></span>';
+          st.firstChild.textContent = body.error || "This feature is disabled.";
+          st.appendChild(settingsLink());
+        } else {
+          offerRetry(body.error || "The run failed.");
+        }
         return;
       }
       if (body.conversation_id) conversationId = body.conversation_id;
@@ -518,17 +664,24 @@
       const resultArtifacts = (body.results || []).map((d) => ({
         kind: (d.origin === "citation" ? "citation" : "result"),
         module: d.module, route: d.route, file_id: d.file_id, label: d.label }));
+      // Honesty flags (UI item 6): coverage + the scope this run actually used.
+      const flags = ["scope: " + scopeAtRun];
+      if (body.context_truncated) flags.push("⚠ partial document context");
+      const consulted = (body.citations || []).length > 0 || !!fileId ||
+        (body.tool_calls || []).some((n) => n === "chat" || n === "knowledge_search");
+      if (!consulted) flags.push("ℹ documents not consulted");
       appendTurn("assistant", body.answer || "(no answer)", {
         tool_calls: body.tool_calls || [], skill_calls: body.skill_calls || [],
         status: body.completed ? "completed"
-              : (body.timed_out ? "time limit reached" : "max steps reached"),
+              : (body.timed_out ? "partial result (time limit)" : "max steps reached"),
+        flags: flags,
         artifacts: resultArtifacts,
       });
       renderRunDetails(body);
       setSessionLabel();
       loadSessions();                      // new session appears / counts bump
     } catch (e) {
-      $("run-status").textContent = "Request failed.";
+      offerRetry("Request failed (network or server error).");
     } finally {
       polling = false;
       clearInterval(poller);
@@ -955,12 +1108,25 @@
   // labelled state, not a surprise failure. Built with textContent (no HTML
   // injection from config-derived strings). Best-effort: on any error the line
   // stays empty and the page behaves as before.
+  let llmStatus = null;                    // latest /api/llm/status payload
+
+  // "Open Settings" link appended to actionable status lines (UI item 3) —
+  // Settings lives in the main SPA at /#settings.
+  function settingsLink() {
+    const a = document.createElement("a");
+    a.href = "/#settings";
+    a.textContent = "Open Settings →";
+    a.style.cssText = "color:var(--accent);margin-left:6px";
+    return a;
+  }
+
   async function loadLlmStatus() {
     const el = $("llm-status");
     if (!el) return;
     try {
       const { body } = await api("/api/llm/status");
       if (!body || !body.success) return;
+      llmStatus = body;
       const enabled = body.enabled || {};
       const local = body.local || {};
       const oc = body.openai_compatible || {};
@@ -976,6 +1142,7 @@
       if (enabled.agent === false) {
         el.textContent = "⚠ Agent disabled — " +
           (body.setup_hint || "set ENABLE_AGENT=true (and LLM_PROVIDER) in .env.");
+        el.appendChild(settingsLink());
         el.classList.add("bad");
         const run = $("run");
         run.disabled = true;
@@ -983,7 +1150,7 @@
       } else {
         el.textContent = "LLM: " + (body.provider || "?") + " · " + model + mode +
           (body.setup_hint ? " — ⚠ " + body.setup_hint : "");
-        if (body.setup_hint) el.classList.add("bad");
+        if (body.setup_hint) { el.classList.add("bad"); el.appendChild(settingsLink()); }
       }
     } catch (e) { /* status line is optional — never blocks the page */ }
   }
@@ -1011,6 +1178,13 @@
   $("delete-session").addEventListener("click", () => deleteSession());
   $("agent-upload").addEventListener("change", onAgentUpload);
   $("agent-doc-refresh").addEventListener("click", () => loadDocs());
+  $("agent-doc").addEventListener("change", updateScopeLine);
+  // Restore the remembered max-steps preference (non-secret, UI item 7).
+  try {
+    const savedSteps = parseInt(localStorage.getItem(STEPS_STORE_KEY) || "", 10);
+    if (savedSteps >= 1 && savedSteps <= 6) $("steps").value = savedSteps;
+  } catch (e) { /* optional */ }
+  updateScopeLine();
   // Launch-from-document (Phase 13/14): /agent?file_id=<uuid> pre-scopes the agent to
   // that document (selected by name in the picker; the file_id stays internal).
   let initialFid = "";

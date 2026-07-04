@@ -54,3 +54,7 @@ faiss-cpu>=1.7.4               # vector similarity search (falls back to cosine 
 # openai>=1.0.0
 # groq>=0.9.0
 torchvision>=0.16.0
+
+# ── Settings: cloud API keys in the OS credential store ──────────────────────
+# (macOS Keychain / Windows Credential Manager / Linux Secret Service)
+keyring>=24.0

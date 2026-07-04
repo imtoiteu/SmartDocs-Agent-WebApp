@@ -144,6 +144,38 @@ def test_translate_explicit_offline_unaffected_by_local_only():
     assert res["engine_used"] == "offline" and calls["online"] == 0
 
 
+def test_translate_status_reports_local_only_without_probing():
+    # The engine-status probe (drives the UI badge/pills) must report online as
+    # unavailable BY POLICY in Local-only mode — and must not even probe
+    # connectivity (nothing may leave the machine).
+    calls = {"online": 0}
+
+    def fake_online_check(timeout=5.0):
+        calls["online"] += 1
+        return True
+
+    r1 = _set_attrs(translate_service,
+                    check_online_available=fake_online_check,
+                    check_offline_available=lambda: True,
+                    _get_installed_pairs=lambda: [("en", "vi")])
+    r2 = _set_attrs(cfg, ALLOW_CLOUD=False,
+                    _argos_installed_pairs=lambda: [])
+    try:
+        s = translate_service.get_engine_status(force=True)
+        assert s["local_only"] is True and s["online"] is False
+        assert calls["online"] == 0                       # no probe went out
+        assert s["offline"] is True                       # offline unaffected
+        r2()
+        r2 = _set_attrs(cfg, ALLOW_CLOUD=True,
+                        _argos_installed_pairs=lambda: [])
+        s = translate_service.get_engine_status(force=True)
+        assert s["local_only"] is False and s["online"] is True
+        assert calls["online"] == 1                       # probed when allowed
+    finally:
+        r1(); r2()
+        translate_service._status_cache = {}              # don't poison later reads
+
+
 # ── AI rewrite: backend order + Local only gate (P7/P8) ───────────────────────
 def _no_local(*a, **k):
     raise NoAIAvailableError("no local model (test)")

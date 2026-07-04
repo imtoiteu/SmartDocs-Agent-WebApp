@@ -25,6 +25,7 @@
   <button class="nav-link" data-view="summarize" data-i18n="nav_summarize">📝 Tóm tắt</button>
   <button class="nav-link" data-view="documents" data-i18n="nav_documents">📁 Tài liệu</button>
   <button class="nav-link" data-view="chat" id="nav-chat-btn">🤖 SmartDocs AI</button>
+  <button class="nav-link" data-view="settings" id="nav-settings-btn" data-i18n="nav_settings">⚙ Cài đặt</button>
   <!-- Agent workspace — separate page at /agent (additive; reached by real navigation, like Admin) -->
   <a id="nav-agent-link" href="/agent" style="display:inline-flex;align-items:center;gap:5px;
      padding:6px 12px;border-radius:8px;font-size:13px;font-weight:500;color:#8b5cf6;
@@ -629,6 +630,45 @@
         <button class="chat-send-btn" id="chat-send-btn" title="Gửi (Enter)">➤</button>
         <button class="btn btn-ghost btn-sm" id="chat-clear-btn" title="Xóa lịch sử" style="width:42px;height:42px;padding:0;border-radius:11px;font-size:16px">🗑</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SETTINGS ══════════════════════════════════════ -->
+<div id="view-settings" class="view v-hidden">
+  <div class="ws-panel" style="max-width:860px;margin:0 auto 18px">
+    <div class="panel-header">
+      <div class="panel-title" data-i18n="settings_privacy_title">🔒 Privacy — where AI processing happens</div>
+    </div>
+    <div class="panel-body">
+      <div id="settings-privacy-badge" class="engine-status-badge engine-status-checking"
+           role="status" aria-live="polite">
+        <span class="status-dot"></span><span id="settings-privacy-text" data-i18n="settings_loading">Loading…</span>
+      </div>
+      <p class="slbl" style="margin:10px 0 6px" data-i18n="settings_privacy_desc">
+        “Allow cloud processing” lets AI features send document text, retrieval
+        excerpts and prompts to a configured cloud provider. “Local only” keeps
+        everything on this machine (offline translation, local models).</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button id="settings-privacy-toggle" class="btn btn-primary" disabled
+                data-i18n="settings_loading">Loading…</button>
+        <span id="settings-privacy-note" class="slbl" aria-live="polite"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="ws-panel" style="max-width:860px;margin:0 auto">
+    <div class="panel-header">
+      <div class="panel-title" data-i18n="settings_keys_title">🔑 Cloud provider API keys</div>
+    </div>
+    <div class="panel-body">
+      <p class="slbl" style="margin:0 0 10px" data-i18n="settings_keys_desc">
+        Keys are stored in your operating system’s credential store (macOS
+        Keychain / Windows Credential Manager / Linux Secret Service) — never in
+        files or the database. Only the last 4 characters are ever shown.</p>
+      <div id="settings-keyring-warn" class="slbl" style="display:none;color:var(--warn);margin:0 0 10px"
+           role="alert"></div>
+      <div id="settings-providers"><!-- one row per provider, rendered by JS --></div>
     </div>
   </div>
 </div>

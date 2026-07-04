@@ -408,7 +408,11 @@ def get_engine_status(force: bool = False) -> dict:
         if not force and _status_cache and (now - _last_probe) < _STATUS_TTL:
             return dict(_status_cache)
 
-        online  = check_online_available()
+        # Privacy (Local only): the online engine is unavailable BY POLICY and
+        # no connectivity probe is made (nothing may leave the machine). The
+        # local_only flag lets the UI say why instead of "no internet".
+        local_only = not cfg.ALLOW_CLOUD
+        online  = False if local_only else check_online_available()
         offline = check_offline_available()
 
         # Installed offline pairs for richer client-side info
@@ -422,6 +426,7 @@ def get_engine_status(force: bool = False) -> dict:
         _status_cache = {
             "online":            online,
             "offline":           offline,
+            "local_only":        local_only,
             "auto":              online or offline,
             "installed_pairs":   installed_pairs,
             "package_dir":       str(_argos_packages_dir),

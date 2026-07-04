@@ -139,8 +139,12 @@
           <div style="flex:0 0 auto; align-self:flex-end">
             <button id="run">Run agent</button>
           </div>
+          <!-- Active scope (UI item 4): what this run will read — one document
+               or the whole library — always visible next to Run. -->
+          <div id="agent-scope" class="muted small" style="flex:1; align-self:flex-end"
+               aria-live="polite"></div>
         </div>
-        <div id="run-status" class="muted" style="margin-top:10px"></div>
+        <div id="run-status" class="muted" style="margin-top:10px" aria-live="polite"></div>
 
         <div id="run-out" style="display:none; margin-top:12px">
           <div id="run-plan" class="muted small" style="margin-bottom:8px; display:none"></div>

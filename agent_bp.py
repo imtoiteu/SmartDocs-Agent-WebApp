@@ -722,6 +722,9 @@ def agent_run():
                     "conversation_id": (conv.id if conv else None),
                     "results": results,
                     "ocr_engine": ocr_engine,
+                    # Source-coverage honesty (UI item 6): the scoped document's
+                    # text did not fully fit the context window.
+                    "context_truncated": doc_ctx_truncated,
                     **result.to_dict()})
 
 
