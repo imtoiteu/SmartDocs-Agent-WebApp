@@ -132,12 +132,23 @@ class GLMOCREngine(OCREngine):
                 "GLM-OCR model server is not running on "
                 f"{cfg.GLM_OCR_API_URL}. Start it with tools/glm_serve.sh.", w, h)
 
-        # GLM-OCR uses the DEFAULT HuggingFace cache (~/.cache/huggingface) where its
-        # layout model lives — strip SmartDocs' HF_* redirects from the child env, and
-        # force offline so it never reaches the network.
+        # The GLM layout model lives in the PROJECT-LOCAL HF cache
+        # (models/huggingface/hub — same cache as every other model; cached by
+        # 'scripts/setup_glm.sh --precache-layout'). Export SmartDocs' redirect to
+        # the glmocr child explicitly and force offline so it never reaches the
+        # network. Legacy fallback: installs primed BEFORE this fix cached the
+        # layout model in the default ~/.cache/huggingface — if it is absent
+        # locally, strip the redirects (old behavior) so those installs keep
+        # working; check_offline.sh flags that state and recommends re-priming.
         env = dict(os.environ)
-        for k in ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE"):
-            env.pop(k, None)
+        if cfg._has_hf_model(cfg.GLM_LAYOUT_MODEL_DIR) or Path(cfg.GLM_LAYOUT_MODEL_DIR).is_dir():
+            env["HF_HOME"]            = str(cfg.HF_DIR)
+            env["HF_HUB_CACHE"]       = str(cfg.HF_HUB_DIR)
+            env["TRANSFORMERS_CACHE"] = str(cfg.HF_HUB_DIR)
+            env.pop("HF_DATASETS_CACHE", None)
+        else:
+            for k in ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE"):
+                env.pop(k, None)
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
 

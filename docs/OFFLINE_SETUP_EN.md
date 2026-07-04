@@ -42,7 +42,7 @@ scripts/start.sh                        # run the stack
 |---|---|---|---|
 | Legacy / Modern Paddle OCR | PaddleX model cache in `~/.paddlex/official_models/` (override: `PADDLE_PDX_CACHE_HOME`) | `setup_offline.py` (Legacy/VietOCR pipeline; Modern via `tools/warmup_modern_models.py`) or first online OCR run | ⚠️ downloads on first run (needs internet once) |
 | **VietOCR** | `models/vietocr/config.yml` **+** `vgg_transformer.pth` | `setup_offline.py` | OCR returns a clear "run setup_offline" error |
-| **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 in the default HF cache + MLX server | `setup_glm.sh --precache-layout` | "pipeline.layout.model_dir is required" / server-not-running toast |
+| **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 in `models/huggingface/hub/` + MLX server | `setup_glm.sh --precache-layout` | "pipeline.layout.model_dir is required" / server-not-running toast |
 | **AI Chat / AI Rewrite / Agent** | local **Qwen 2.5 1.5B** (the default, `CHAT_MODEL` = `QWEN_MODEL` = `FALLBACK_CHAT_MODEL`) | `setup_offline.py` | "No chat model could be loaded" |
 | PhoBERT summarization | `vinai/phobert-base-v2` | `setup_offline.py` | **falls back** to extractive TF-IDF (still works) |
 | RAG embeddings | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | `setup_offline.py` | **falls back** to char-hash retrieval (still works) |
@@ -55,11 +55,13 @@ Notes:
   models (e.g. 3B) are **not** the default and are **not** downloaded unless you set
   `CHAT_MODEL`/`QWEN_MODEL` in `.env` — the 3B model is optional and opt-in. A
   missing 3B never makes chat/rewrite report themselves as broken.
-- **GLM layout model lives in the DEFAULT HF cache** (`~/.cache/huggingface`), not
-  in `models/`. `glm_adapter.py` deliberately strips `HF_HOME` before shelling out
-  to `glmocr`, so the layout checkpoint must be cached there. `setup_glm.sh
-  --precache-layout` downloads it to the right place; afterwards runtime works with
-  `HF_HUB_OFFLINE=1`.
+- **GLM layout model lives in the PROJECT-LOCAL HF cache** (`models/huggingface/hub/`),
+  same as every other model. `glm_adapter.py` exports that cache to the `glmocr`
+  subprocess, so `setup_glm.sh --precache-layout` caches the checkpoint there
+  (migrating a copy from `~/.cache/huggingface` left by older versions instead of
+  re-downloading); afterwards runtime works with `HF_HUB_OFFLINE=1`. A layout model
+  that exists only in the global cache still works (legacy fallback) but is flagged
+  by `check_offline.sh` for re-priming.
 
 ---
 
@@ -103,8 +105,8 @@ full HF snapshot (config + weights) resolves in the app's **project-local** cach
 (`models/huggingface/hub/`) — a half-finished or aborted download reports **missing**,
 not ✅, so the check can't disagree with what the app can actually load. A model
 that exists only in the global `~/.cache/huggingface` does NOT count — the app
-never loads from there. (The GLM layout model is the one exception checked in the
-default `~/.cache/huggingface`.)
+never loads from there. (This now includes the GLM layout model; a copy found only
+in the global cache is reported as needing `scripts/setup_glm.sh --precache-layout`.)
 
 ---
 
@@ -123,9 +125,10 @@ default `~/.cache/huggingface`.)
   ```
   Models already complete in the global cache are **copied** into
   `models/huggingface/hub/` automatically (snapshots/blobs/refs preserved) — no
-  re-download. Once `scripts/check_offline.sh` is all-green you may reclaim disk
-  with `rm -rf ~/.cache/huggingface/hub/models--Qwen--*` etc. (keep
-  `models--PaddlePaddle--*` — the GLM layout model intentionally lives there).
+  re-download. The GLM layout model is project-local too (`setup_glm.sh
+  --precache-layout` migrates it the same way), so once `scripts/check_offline.sh`
+  is all-green the global `~/.cache/huggingface` is no longer needed by SmartDocs
+  and may be reclaimed entirely.
 - **`UNSUPPORTED Python …` / `Main venv is incomplete (missing imports: …)`** —
   `setup_offline.sh` now refuses to download anything when the environment is
   broken. The main venv REQUIRES **Python 3.10** (3.11 tolerated); 3.12–3.14
@@ -182,5 +185,6 @@ default `~/.cache/huggingface`.)
 
 Once primed, set (or keep) `OFFLINE=1` in `.env`. The app loads HuggingFace,
 Argos and Stanza models only from `MODEL_DIR` and never reaches the network. Copy
-the whole project folder (including `models/`) plus the default HF cache to an
-air-gapped machine to run without internet.
+the whole project folder (including `models/` — the GLM layout model is in there
+too now) to an air-gapped machine to run without internet; only the PaddleX cache
+(`~/.paddlex/official_models`) lives outside the project folder.

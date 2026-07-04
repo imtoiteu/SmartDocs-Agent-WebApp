@@ -220,7 +220,9 @@ pipeline:
     verify_ssl: false
   layout:
     # Hugging Face id (default) or an absolute local checkpoint directory.
-    # Override with GLM_LAYOUT_MODEL_DIR in .env. Pre-cache it while online with
+    # Override with GLM_LAYOUT_MODEL_DIR in .env. An HF id resolves from the
+    # PROJECT-LOCAL cache (<repo>/models/huggingface/hub): glm_adapter.py exports
+    # HF_HUB_CACHE there before running glmocr. Pre-cache it while online with
     # 'scripts/setup_glm.sh --precache-layout' so runtime can stay offline.
     model_dir: ${GLM_LAYOUT_MODEL_DIR}
     device: cpu
@@ -240,10 +242,12 @@ else
 fi
 
 # ============================================================================
-#  Optional: pre-cache the layout model into the DEFAULT HF cache.
-#  glm_adapter.py strips HF_HOME before shelling out to glmocr, so the layout
-#  model MUST live in ~/.cache/huggingface (NOT models/huggingface/). Run while
-#  online; afterwards runtime works with HF_HUB_OFFLINE=1.
+#  Optional: pre-cache the layout model into the PROJECT-LOCAL HF cache
+#  (<repo>/models/huggingface/hub — same cache as Qwen/PhoBERT/embeddings, so
+#  the whole project folder stays portable/offline). glm_adapter.py exports
+#  HF_HUB_CACHE to that hub before shelling out to glmocr. A copy already
+#  complete in the user's global ~/.cache/huggingface (from an OLDER
+#  --precache-layout) is MIGRATED (copied) instead of re-downloaded.
 #  Triggered by: scripts/setup_glm.sh --precache-layout   (skipped by default).
 # ============================================================================
 PRECACHE_LAYOUT=0
@@ -259,20 +263,60 @@ fi
 if [ "$PRECACHE_LAYOUT" = "1" ] && [ -d "$GLM_LAYOUT_MODEL_DIR" ]; then
   ok "Layout model_dir is a local directory — nothing to download."
 elif [ "$PRECACHE_LAYOUT" = "1" ]; then
-  info "Pre-caching layout model into the DEFAULT HF cache: $GLM_LAYOUT_MODEL_DIR"
-  # Download with HF_* redirects stripped so it lands in ~/.cache/huggingface,
-  # exactly where the adapter (offline) will look for it.
-  env -u HF_HOME -u HF_HUB_CACHE -u TRANSFORMERS_CACHE -u HF_DATASETS_CACHE \
+  PROJ_HF_HUB="$(project_hf_hub)"
+  info "Pre-caching layout model into the PROJECT-LOCAL HF cache: $GLM_LAYOUT_MODEL_DIR"
+  info "  → $PROJ_HF_HUB"
+  if GLM_LAYOUT_ID="$GLM_LAYOUT_MODEL_DIR" PROJ_HF_HUB="$PROJ_HF_HUB" \
       HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 \
-      "$SDK_PY" -c "
-import sys
-try:
-    from huggingface_hub import snapshot_download
-except Exception as e:
-    print('huggingface_hub not available in .venv-sdk:', e); sys.exit(1)
-p = snapshot_download('${GLM_LAYOUT_MODEL_DIR}')
-print('Layout model cached at:', p)
-" && ok "Layout model pre-cached" || warn "Layout pre-cache failed (need internet; retried at first online OCR run)."
+      "$SDK_PY" - <<'PYEOF'
+import os, shutil, sys
+from pathlib import Path
+
+mid = os.environ["GLM_LAYOUT_ID"]
+hub = Path(os.environ["PROJ_HF_HUB"])
+hub.mkdir(parents=True, exist_ok=True)
+repo = "models--" + mid.replace("/", "--")
+proj = hub / repo
+glob = Path.home() / ".cache" / "huggingface" / "hub" / repo
+
+WEIGHTS = (".safetensors", ".bin", ".pt", ".pth", ".pdparams", ".onnx", ".ckpt")
+
+def complete(root):
+    """A snapshot revision with a RESOLVING config.json + one RESOLVING weight file
+    (dangling symlinks from an aborted download must NOT count)."""
+    snaps = root / "snapshots"
+    dirs = [p for p in snaps.iterdir() if p.is_dir()] if snaps.is_dir() else []
+    for d in dirs or ([root] if root.is_dir() else []):
+        if (d / "config.json").exists() and any(
+                p.suffix.lower() in WEIGHTS and p.exists() for p in d.glob("*")):
+            return True
+    return False
+
+if complete(proj):
+    print(f"Layout model already complete in project cache: {proj}")
+    sys.exit(0)
+if glob.exists() and complete(glob):
+    # HF blob symlinks are relative — copytree(symlinks=True) keeps them valid.
+    print(f"Migrating from global cache (no re-download): {glob} -> {proj}")
+    if proj.exists():
+        shutil.rmtree(proj)          # replace a partial/broken local copy
+    shutil.copytree(glob, proj, symlinks=True)
+else:
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception as e:
+        print("huggingface_hub not available in .venv-sdk:", e); sys.exit(1)
+    p = snapshot_download(mid, cache_dir=str(hub))
+    print("Layout model downloaded to:", p)
+if not complete(proj):
+    print(f"Layout model still incomplete in {proj} — re-run online."); sys.exit(1)
+print(f"Layout model ready (project-local): {proj}")
+PYEOF
+  then
+    ok "Layout model pre-cached (project-local): $PROJ_HF_HUB"
+  else
+    warn "Layout pre-cache failed (need internet; re-run 'scripts/setup_glm.sh --precache-layout' online)."
+  fi
 fi
 
 hr

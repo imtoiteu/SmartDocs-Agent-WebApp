@@ -227,12 +227,19 @@ else
   info "GLM layout config    : $GLM_CFG not present (run scripts/setup_glm.sh)"
 fi
 
-# --- GLM layout model cache (DEFAULT HF cache, where the adapter looks) ------
+# --- GLM layout model cache (PROJECT-LOCAL hub, where the adapter looks) -----
+# Same models/huggingface/hub as every other model; glm_adapter.py exports it to
+# the glmocr child. A copy ONLY in ~/.cache/huggingface came from an older
+# --precache-layout run and must be re-primed to be project-local/portable.
+PROJ_HUB="$(project_hf_hub)"
 DEF_HUB="${HOME}/.cache/huggingface/hub"
-if compgen -G "$DEF_HUB/models--PaddlePaddle--PP-DocLayout*" >/dev/null 2>&1; then
-  ok  "GLM layout model     : cached in $DEF_HUB"
+if compgen -G "$PROJ_HUB/models--PaddlePaddle--PP-DocLayout*" >/dev/null 2>&1; then
+  ok  "GLM layout model     : cached in $PROJ_HUB (project-local)"
+elif compgen -G "$DEF_HUB/models--PaddlePaddle--PP-DocLayout*" >/dev/null 2>&1; then
+  warn "GLM layout model     : Found in global cache but missing from project-local cache."
+  warn "                       Run scripts/setup_glm.sh --precache-layout."
 else
-  info "GLM layout model     : not cached — 'scripts/setup_glm.sh --precache-layout' (online), or first online OCR run"
+  info "GLM layout model     : not cached — 'scripts/setup_glm.sh --precache-layout' (online)"
 fi
 
 # --- GLM port + health ------------------------------------------------------

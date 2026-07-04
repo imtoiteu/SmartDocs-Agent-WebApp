@@ -546,8 +546,9 @@ class _Config:
         "check shows ✅ but the app says not-in-cache" symptom.
 
         ``include_default_cache=True`` also searches ``~/.cache/huggingface`` — used
-        ONLY for the GLM layout model, which deliberately lives in the default cache
-        because glm_adapter.py strips HF_HOME before shelling out to glmocr.
+        ONLY to detect a GLM layout model stranded in the default cache by an
+        older ``setup_glm.sh --precache-layout`` (reported as needing re-priming,
+        never as project-local/ready).
         """
         name = "models--" + model_id.replace("/", "--")
         roots = [self.HF_HUB_DIR, self.HF_DIR]
@@ -648,9 +649,15 @@ class _Config:
         embeddings    = self._has_hf_model(sbert_id)
         argos_pairs   = self._argos_installed_pairs()
         argos         = bool(argos_pairs)
-        glm_layout    = (Path(self.GLM_LAYOUT_MODEL_DIR).exists()
-                         if Path(self.GLM_LAYOUT_MODEL_DIR).is_dir()
-                         else self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR, include_default_cache=True))
+        # GLM layout model: PROJECT-LOCAL cache (same hub as every other model —
+        # glm_adapter.py exports it to the glmocr child). A copy that exists only
+        # in the default ~/.cache/huggingface (primed by an older setup_glm.sh)
+        # is flagged for re-priming, not counted as project-local.
+        glm_layout      = (Path(self.GLM_LAYOUT_MODEL_DIR).is_dir()
+                           or self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR))
+        glm_global_only = (not glm_layout
+                           and self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR,
+                                                  include_default_cache=True))
 
         setup = "run scripts/setup_offline.sh (online)"
         vcfg_ok, vcfg_why = validate_vietocr_config(vietocr_cfg)
@@ -665,7 +672,11 @@ class _Config:
             "phobert":       (phobert,       self.PHOBERT_MODEL       + ("" if phobert       else "  ← MISSING (extractive TF-IDF fallback still works)")),
             "embeddings":    (embeddings,    sbert_id                 + ("" if embeddings    else "  ← MISSING (char-hash retrieval fallback still works)")),
             "argos":         (argos,         (f"{len(argos_pairs)} package(s): {', '.join(argos_pairs)}" if argos else f"no packages  ← MISSING ({setup}); online Google translate still works")),
-            "glm_layout_model": (glm_layout, str(self.GLM_LAYOUT_MODEL_DIR) + ("" if glm_layout else "  ← not cached (setup_glm.sh --precache-layout, or first online run)")),
+            "glm_layout_model": (glm_layout, str(self.GLM_LAYOUT_MODEL_DIR) + (
+                "" if glm_layout
+                else "  ← Found in global cache but missing from project-local cache. "
+                     "Run scripts/setup_glm.sh --precache-layout." if glm_global_only
+                else "  ← not cached (scripts/setup_glm.sh --precache-layout, online)")),
         }
 
     def offline_readiness_report(self) -> str:

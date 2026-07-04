@@ -78,10 +78,13 @@ scripts/start_glm.sh -b                # start the GLM model server in the backg
 scripts/start.sh                       # full stack
 ```
 
-> `--precache-layout` downloads the PP-DocLayoutV3 checkpoint into the **default**
-> HF cache (`~/.cache/huggingface`) — where `glm_adapter.py` looks — so self-hosted
-> layout detection works offline. Without a cached layout model + a
-> `pipeline.layout.model_dir` in `mlx_config.yaml`, GLM OCR fails with
+> `--precache-layout` caches the PP-DocLayoutV3 checkpoint into the
+> **project-local** HF cache (`models/huggingface/hub` — the same cache as every
+> other model; `glm_adapter.py` points glmocr there) so self-hosted layout
+> detection works offline and the whole project folder stays portable. A copy
+> already in `~/.cache/huggingface` from an older run is migrated, not
+> re-downloaded. Without a cached layout model + a `pipeline.layout.model_dir`
+> in `mlx_config.yaml`, GLM OCR fails with
 > *"pipeline.layout.model_dir is required for self-hosted layout detection"*.
 
 **Three isolated Python environments** (this is the key to why GLM works without

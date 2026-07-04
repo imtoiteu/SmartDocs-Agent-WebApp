@@ -83,8 +83,9 @@ normalize_env() {
   GLM_OCR_API_URL="${GLM_OCR_API_URL:-http://${GLM_HOST}:${GLM_PORT}}"
   GLM_MODEL="${GLM_MODEL:-mlx-community/GLM-OCR-bf16}"
   # Layout model for GLM self-hosted mode (glmocr requires pipeline.layout.model_dir).
-  # Default is a Hugging Face id (cached in the DEFAULT HF cache); may be an
-  # absolute local checkpoint dir. setup_glm.sh writes this into mlx_config.yaml.
+  # Default is a Hugging Face id (cached PROJECT-LOCALLY in models/huggingface/hub
+  # by setup_glm.sh --precache-layout); may be an absolute local checkpoint dir.
+  # setup_glm.sh writes this into mlx_config.yaml.
   GLM_LAYOUT_MODEL_DIR="${GLM_LAYOUT_MODEL_DIR:-PaddlePaddle/PP-DocLayoutV3_safetensors}"
   export GLM_HOST GLM_PORT GLM_OCR_API_URL GLM_MODEL GLM_LAYOUT_MODEL_DIR
 
@@ -102,6 +103,20 @@ normalize_env() {
     *)              ENABLE_GLM="false" ;;
   esac
   export ENABLE_GLM
+}
+
+# --- Project-local HuggingFace hub cache -------------------------------------
+# Mirrors config._configure_hf_env(): $MODEL_DIR/huggingface/hub, MODEL_DIR from
+# .env (default <repo>/models); a relative MODEL_DIR anchors at the repo root
+# (the scripts always run the app from there). This is where ALL HF models live
+# — including the GLM layout model since the project-local-cache fix.
+project_hf_hub() {
+  local md="${MODEL_DIR:-$REPO_ROOT/models}"
+  case "$md" in
+    /*) ;;
+    *)  md="$REPO_ROOT/${md#./}" ;;
+  esac
+  printf '%s/huggingface/hub\n' "$md"
 }
 
 # --- Main-venv Python version policy ----------------------------------------

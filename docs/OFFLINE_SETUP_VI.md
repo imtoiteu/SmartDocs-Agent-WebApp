@@ -41,7 +41,7 @@ scripts/start.sh                        # chạy hệ thống
 |---|---|---|---|
 | Paddle OCR Legacy / Modern | cache mô hình PaddleX tại `~/.paddlex/official_models/` (đổi qua `PADDLE_PDX_CACHE_HOME`) | `setup_offline.py` (pipeline Legacy/VietOCR; Modern qua `tools/warmup_modern_models.py`) hoặc lần OCR đầu có mạng | ⚠️ tải ở lần chạy đầu (cần mạng một lần) |
 | **VietOCR** | `models/vietocr/config.yml` **+** `vgg_transformer.pth` | `setup_offline.py` | OCR trả lỗi rõ ràng "chạy setup_offline" |
-| **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 trong HF cache mặc định + máy chủ MLX | `setup_glm.sh --precache-layout` | lỗi "pipeline.layout.model_dir is required" / thông báo server chưa chạy |
+| **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 trong `models/huggingface/hub/` + máy chủ MLX | `setup_glm.sh --precache-layout` | lỗi "pipeline.layout.model_dir is required" / thông báo server chưa chạy |
 | **AI Chat / AI Rewrite / Agent** | LLM cục bộ **Qwen 2.5 1.5B** (mặc định, `CHAT_MODEL` = `QWEN_MODEL` = `FALLBACK_CHAT_MODEL`) | `setup_offline.py` | "No chat model could be loaded" |
 | Tóm tắt PhoBERT | `vinai/phobert-base-v2` | `setup_offline.py` | **fallback** sang TF-IDF trích xuất (vẫn chạy) |
 | Embeddings RAG | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | `setup_offline.py` | **fallback** sang truy hồi char-hash (vẫn chạy) |
@@ -54,10 +54,12 @@ Lưu ý:
   hình lớn hơn (vd 3B) **không** phải mặc định và **không** được tải trừ khi bạn đặt
   `CHAT_MODEL`/`QWEN_MODEL` trong `.env` — 3B là tuỳ chọn, tự bật. Thiếu 3B **không**
   khiến chat/rewrite báo hỏng.
-- **Mô hình layout GLM nằm trong HF cache MẶC ĐỊNH** (`~/.cache/huggingface`), không
-  phải trong `models/`. `glm_adapter.py` cố ý bỏ `HF_HOME` trước khi gọi `glmocr`,
-  nên checkpoint layout phải được cache ở đó. `setup_glm.sh --precache-layout` tải
-  đúng chỗ; sau đó chạy được với `HF_HUB_OFFLINE=1`.
+- **Mô hình layout GLM nằm trong HF cache CỤC BỘ CỦA DỰ ÁN** (`models/huggingface/hub/`),
+  cùng chỗ với mọi mô hình khác. `glm_adapter.py` truyền cache này cho tiến trình
+  `glmocr`, nên `setup_glm.sh --precache-layout` cache checkpoint vào đó (bản đã có
+  trong `~/.cache/huggingface` từ phiên bản cũ sẽ được di chuyển, không tải lại);
+  sau đó chạy được với `HF_HUB_OFFLINE=1`. Mô hình chỉ có trong cache toàn cục vẫn
+  chạy (fallback tương thích cũ) nhưng `check_offline.sh` sẽ nhắc chạy lại precache.
 
 ---
 
@@ -99,8 +101,8 @@ snapshot HF hoàn chỉnh (config + weights) trong cache **cục bộ của dự
 (`models/huggingface/hub/`) — tải dở hoặc bị hủy giữa chừng sẽ báo **thiếu**, không phải
 ✅, nên kết quả kiểm tra luôn khớp với những gì ứng dụng thực sự nạp được. Mô hình chỉ
 nằm trong cache toàn cục `~/.cache/huggingface` KHÔNG được tính — ứng dụng không bao
-giờ nạp từ đó. (Mô hình layout GLM là ngoại lệ, được kiểm tra trong cache mặc định
-`~/.cache/huggingface`.)
+giờ nạp từ đó. (Giờ bao gồm cả mô hình layout GLM; bản chỉ có trong cache toàn cục
+sẽ được báo là cần chạy `scripts/setup_glm.sh --precache-layout`.)
 
 ---
 
@@ -119,9 +121,9 @@ giờ nạp từ đó. (Mô hình layout GLM là ngoại lệ, được kiểm t
   ```
   Mô hình đã hoàn chỉnh trong cache toàn cục sẽ được **sao chép** tự động vào
   `models/huggingface/hub/` (giữ nguyên snapshots/blobs/refs) — không tải lại.
-  Khi `scripts/check_offline.sh` đã xanh hết, có thể dọn đĩa bằng
-  `rm -rf ~/.cache/huggingface/hub/models--Qwen--*` v.v. (GIỮ LẠI
-  `models--PaddlePaddle--*` — mô hình layout GLM cố ý nằm ở đó).
+  Mô hình layout GLM giờ cũng nằm trong dự án (`setup_glm.sh --precache-layout`
+  di chuyển tương tự), nên khi `scripts/check_offline.sh` đã xanh hết,
+  `~/.cache/huggingface` không còn cần cho SmartDocs và có thể xoá toàn bộ.
 - **`UNSUPPORTED Python …` / `Main venv is incomplete (missing imports: …)`** —
   `setup_offline.sh` giờ từ chối tải mô hình khi môi trường hỏng. Venv chính
   BẮT BUỘC **Python 3.10** (3.11 chấp nhận); 3.12–3.14 hoàn toàn không cài được
@@ -176,4 +178,6 @@ giờ nạp từ đó. (Mô hình layout GLM là ngoại lệ, được kiểm t
 
 Sau khi đã tải, giữ `OFFLINE=1` trong `.env`. Ứng dụng chỉ nạp mô hình
 HuggingFace / Argos / Stanza từ `MODEL_DIR`, không chạm mạng. Sao chép toàn bộ thư
-mục dự án (kèm `models/`) cùng HF cache mặc định sang máy air-gapped để chạy không cần mạng.
+mục dự án (kèm `models/` — mô hình layout GLM giờ cũng ở trong đó) sang máy
+air-gapped để chạy không cần mạng; chỉ cache PaddleX (`~/.paddlex/official_models`)
+nằm ngoài thư mục dự án.
