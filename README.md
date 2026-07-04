@@ -71,21 +71,29 @@ scripts/stop.sh         # stop background services (web + GLM)
 
 ```bash
 scripts/setup.sh                       # main SmartDocs venv (keeps Pillow 10.2.0 for VietOCR)
-scripts/setup_glm.sh --precache-layout # BOTH GLM venvs + write layout.model_dir + cache PP-DocLayoutV3
-scripts/check.sh                       # verify both venvs' imports, Pillow, ports, health
-scripts/check_offline.sh               # verify GLM layout config + layout model cache
+scripts/setup_glm.sh --precache        # BOTH GLM venvs + layout.model_dir + cache PP-DocLayoutV3 + GLM-OCR-bf16
+scripts/check.sh                       # verify both venvs' imports, Pillow, ports, server readiness
+scripts/check_offline.sh               # verify GLM layout config + BOTH GLM model caches
 scripts/start_glm.sh -b                # start the GLM model server in the background
 scripts/start.sh                       # full stack
 ```
 
-> `--precache-layout` caches the PP-DocLayoutV3 checkpoint into the
-> **project-local** HF cache (`models/huggingface/hub` — the same cache as every
-> other model; `glm_adapter.py` points glmocr there) so self-hosted layout
-> detection works offline and the whole project folder stays portable. A copy
-> already in `~/.cache/huggingface` from an older run is migrated, not
-> re-downloaded. Without a cached layout model + a `pipeline.layout.model_dir`
-> in `mlx_config.yaml`, GLM OCR fails with
-> *"pipeline.layout.model_dir is required for self-hosted layout detection"*.
+> `--precache` caches BOTH GLM models into the **project-local** HF cache
+> (`models/huggingface/hub` — the same cache as every other model):
+> the PP-DocLayoutV3 layout checkpoint (`--precache-layout`; `glm_adapter.py`
+> points glmocr there) and the MLX server's own model
+> `mlx-community/GLM-OCR-bf16` (`--precache-mlx`; `tools/glm_serve.sh` points
+> `mlx_vlm.server` there). Copies already in `~/.cache/huggingface` from older
+> runs are migrated, not re-downloaded. Without a cached layout model + a
+> `pipeline.layout.model_dir` in `mlx_config.yaml`, GLM OCR fails with
+> *"pipeline.layout.model_dir is required for self-hosted layout detection"*;
+> without a cached MLX model the FIRST server start downloads it (internet once).
+>
+> The server **preloads** its model at startup (port opens only when inference
+> is ready — `GLM_PRELOAD=false` for lazy loading). While a cold server is still
+> loading, the UI answers *"GLM server is still loading the OCR model. Please
+> wait and retry."* and `scripts/check.sh` reports the loading state instead of
+> pretending a listening port means ready.
 
 **Three isolated Python environments** (this is the key to why GLM works without
 breaking VietOCR):
@@ -156,7 +164,7 @@ run_windows.bat         # Windows
 |---|---|---|
 | Legacy PaddleOCR, PaddleOCR Modern | ✅ (models fetched on first online OCR run) | pre-cache via `scripts/setup_offline.sh` for offline |
 | VietOCR | — | `scripts/setup_offline.sh` — needs `vgg_transformer.pth` **and** `models/vietocr/config.yml` (both created by it) |
-| GLM-OCR engine | — | `scripts/setup_glm.sh --precache-layout` (repo-local venvs + PP-DocLayoutV3) + MLX server, **Apple Silicon only** |
+| GLM-OCR engine | — | `scripts/setup_glm.sh --precache` (repo-local venvs + PP-DocLayoutV3 + GLM-OCR-bf16) + MLX server, **Apple Silicon only** |
 | Correction (rule-based), extractive summarization, text reading | ✅ | — |
 | Translation (online) | ✅ (needs internet) | — |
 | Translation (offline / Argos) | — | `scripts/setup_offline.sh` (Argos packages in `MODEL_DIR`) |

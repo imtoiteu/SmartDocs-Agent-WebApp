@@ -24,6 +24,12 @@
 #  created (so paths resolve), but the MLX install/verify cannot succeed — that
 #  is fine: GLM stays optional and the rest of SmartDocs is unaffected.
 #
+#  Flags:
+#    --precache-layout   pre-cache the PP-DocLayoutV3 layout detector
+#    --precache-mlx      pre-cache the MLX server model (GLM-OCR-bf16)
+#    --precache          both (recommended one-time online priming)
+#  All models land in the PROJECT-LOCAL HF cache (<repo>/models/huggingface/hub).
+#
 #  Env:
 #    GLM_SETUP_PYTHON=/path/to/python3.12   # pin the interpreter explicitly
 #    FORCE_GLM_PY=1                         # allow Python 3.13/3.14 anyway
@@ -242,37 +248,35 @@ else
 fi
 
 # ============================================================================
-#  Optional: pre-cache the layout model into the PROJECT-LOCAL HF cache
+#  Optional: pre-cache GLM models into the PROJECT-LOCAL HF cache
 #  (<repo>/models/huggingface/hub — same cache as Qwen/PhoBERT/embeddings, so
-#  the whole project folder stays portable/offline). glm_adapter.py exports
-#  HF_HUB_CACHE to that hub before shelling out to glmocr. A copy already
-#  complete in the user's global ~/.cache/huggingface (from an OLDER
-#  --precache-layout) is MIGRATED (copied) instead of re-downloaded.
-#  Triggered by: scripts/setup_glm.sh --precache-layout   (skipped by default).
+#  the whole project folder stays portable/offline). TWO distinct models:
+#
+#    --precache-layout  PP-DocLayoutV3 layout detector (glm_adapter.py exports
+#                       HF_HUB_CACHE to the project hub before running glmocr)
+#    --precache-mlx     the MLX server's OWN vision model (default
+#                       mlx-community/GLM-OCR-bf16 — tools/glm_serve.sh exports
+#                       the same project hub before starting mlx_vlm.server, so
+#                       a pre-cached model means NO download/cold surprise at
+#                       first server start)
+#    --precache         both of the above
+#
+#  A copy already complete in the user's global ~/.cache/huggingface (from an
+#  OLDER setup/server run) is MIGRATED (copied) instead of re-downloaded.
 # ============================================================================
-PRECACHE_LAYOUT=0
-for a in "$@"; do case "$a" in --precache-layout) PRECACHE_LAYOUT=1 ;; esac; done
-if [ "$PRECACHE_LAYOUT" = "1" ]; then
-  hr
-  case "$GLM_LAYOUT_MODEL_DIR" in
-    */*) ;;  # looks like an HF id (org/name) — proceed
-    *)   warn "GLM_LAYOUT_MODEL_DIR ($GLM_LAYOUT_MODEL_DIR) is not an HF id — skipping pre-cache."
-         PRECACHE_LAYOUT=0 ;;
-  esac
-fi
-if [ "$PRECACHE_LAYOUT" = "1" ] && [ -d "$GLM_LAYOUT_MODEL_DIR" ]; then
-  ok "Layout model_dir is a local directory — nothing to download."
-elif [ "$PRECACHE_LAYOUT" = "1" ]; then
-  PROJ_HF_HUB="$(project_hf_hub)"
-  info "Pre-caching layout model into the PROJECT-LOCAL HF cache: $GLM_LAYOUT_MODEL_DIR"
-  info "  → $PROJ_HF_HUB"
-  if GLM_LAYOUT_ID="$GLM_LAYOUT_MODEL_DIR" PROJ_HF_HUB="$PROJ_HF_HUB" \
+# Pre-cache ONE HF model project-locally. $1 = HF model id.
+# Order: complete in project hub → done; complete in global cache → migrate
+# (copy, preserving the snapshots/blobs/refs layout); else → download with an
+# explicit cache_dir. Always re-verifies completeness (a RESOLVING config.json
+# + one RESOLVING weight file) before reporting success.
+precache_hf_model() {
+  GLM_PRECACHE_ID="$1" PROJ_HF_HUB="$(project_hf_hub)" \
       HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 \
       "$SDK_PY" - <<'PYEOF'
 import os, shutil, sys
 from pathlib import Path
 
-mid = os.environ["GLM_LAYOUT_ID"]
+mid = os.environ["GLM_PRECACHE_ID"]
 hub = Path(os.environ["PROJ_HF_HUB"])
 hub.mkdir(parents=True, exist_ok=True)
 repo = "models--" + mid.replace("/", "--")
@@ -293,7 +297,7 @@ def complete(root):
     return False
 
 if complete(proj):
-    print(f"Layout model already complete in project cache: {proj}")
+    print(f"{mid} already complete in project cache: {proj}")
     sys.exit(0)
 if glob.exists() and complete(glob):
     # HF blob symlinks are relative — copytree(symlinks=True) keeps them valid.
@@ -307,15 +311,52 @@ else:
     except Exception as e:
         print("huggingface_hub not available in .venv-sdk:", e); sys.exit(1)
     p = snapshot_download(mid, cache_dir=str(hub))
-    print("Layout model downloaded to:", p)
+    print(f"{mid} downloaded to:", p)
 if not complete(proj):
-    print(f"Layout model still incomplete in {proj} — re-run online."); sys.exit(1)
-print(f"Layout model ready (project-local): {proj}")
+    print(f"{mid} still incomplete in {proj} — re-run online."); sys.exit(1)
+print(f"{mid} ready (project-local): {proj}")
 PYEOF
-  then
+}
+
+PRECACHE_LAYOUT=0
+PRECACHE_MLX=0
+for a in "$@"; do case "$a" in
+  --precache-layout)         PRECACHE_LAYOUT=1 ;;
+  --precache-mlx)            PRECACHE_MLX=1 ;;
+  --precache|--precache-all) PRECACHE_LAYOUT=1; PRECACHE_MLX=1 ;;
+esac; done
+
+if [ "$PRECACHE_LAYOUT" = "1" ]; then
+  hr
+  case "$GLM_LAYOUT_MODEL_DIR" in
+    */*) ;;  # looks like an HF id (org/name) — proceed
+    *)   warn "GLM_LAYOUT_MODEL_DIR ($GLM_LAYOUT_MODEL_DIR) is not an HF id — skipping pre-cache."
+         PRECACHE_LAYOUT=0 ;;
+  esac
+fi
+if [ "$PRECACHE_LAYOUT" = "1" ] && [ -d "$GLM_LAYOUT_MODEL_DIR" ]; then
+  ok "Layout model_dir is a local directory — nothing to download."
+elif [ "$PRECACHE_LAYOUT" = "1" ]; then
+  PROJ_HF_HUB="$(project_hf_hub)"
+  info "Pre-caching layout model into the PROJECT-LOCAL HF cache: $GLM_LAYOUT_MODEL_DIR"
+  info "  → $PROJ_HF_HUB"
+  if precache_hf_model "$GLM_LAYOUT_MODEL_DIR"; then
     ok "Layout model pre-cached (project-local): $PROJ_HF_HUB"
   else
     warn "Layout pre-cache failed (need internet; re-run 'scripts/setup_glm.sh --precache-layout' online)."
+  fi
+fi
+
+if [ "$PRECACHE_MLX" = "1" ]; then
+  hr
+  PROJ_HF_HUB="$(project_hf_hub)"
+  info "Pre-caching MLX server model into the PROJECT-LOCAL HF cache: $GLM_MODEL"
+  info "  → $PROJ_HF_HUB"
+  if precache_hf_model "$GLM_MODEL"; then
+    ok "MLX server model pre-cached (project-local): $PROJ_HF_HUB"
+    ok "First 'scripts/start_glm.sh' will now load it from there — no download at startup."
+  else
+    warn "MLX model pre-cache failed (need internet; re-run 'scripts/setup_glm.sh --precache-mlx' online)."
   fi
 fi
 
@@ -326,6 +367,8 @@ echo "  .venv-mlx : $MLX_PY   (MLX server)"
 echo "  .venv-sdk : $SDK_PY   (glmocr CLI — what the UI uses)"
 echo
 echo "Next:"
+echo "  scripts/setup_glm.sh --precache   # one-time online: layout + MLX server model"
+echo "                                    # into models/huggingface/hub (project-local)"
 echo "  scripts/check.sh          # verify both venvs' imports, paths, health"
 echo "  scripts/start_glm.sh -b   # start the GLM model server (Apple Silicon)"
 echo "  scripts/start.sh          # full stack (starts GLM if ENABLE_GLM=true)"

@@ -157,11 +157,30 @@ fi
 
 if command -v curl >/dev/null 2>&1; then
   if [ "$ENABLE_GLM" = "true" ]; then
-    if glm_health; then
-      ok  "GLM health           : 200 on ${GLM_OCR_API_URL} (model: ${GLM_MODEL})"
-    else
-      info "GLM health           : not responding on ${GLM_OCR_API_URL} (start: scripts/start_glm.sh -b)"
-    fi
+    # Three distinct facts, NOT one: port listening ≠ model loaded. A cold GLM
+    # server can hold the port while it still loads (or first-run downloads)
+    # the MLX model — OCR requests fail until it finishes.
+    GLM_STATE="$(glm_ready_state)"
+    case "$GLM_STATE" in
+      ready:*)
+        ok  "GLM health           : READY — model loaded (${GLM_STATE#ready:}) on ${GLM_OCR_API_URL}" ;;
+      loading)
+        warn "GLM server starting/loading model; wait or check logs/glm.log"
+        warn "  (port ${GLM_PORT} is listening but inference is not available yet)" ;;
+      no-model)
+        info "GLM health           : server up on ${GLM_OCR_API_URL} but NO model loaded yet"
+        info "                       (lazy mode — the first OCR request loads it; preload is the default via GLM_PRELOAD=true)" ;;
+      unknown)
+        # /health missing (older mlx_vlm?) — fall back to the deep inference
+        # probe. NOTE: on a cold lazy server this triggers the model load.
+        if glm_health; then
+          ok  "GLM health           : 200 on ${GLM_OCR_API_URL} (model: ${GLM_MODEL})"
+        else
+          warn "GLM health           : something answers on ${GLM_OCR_API_URL} but not like the GLM server (check what runs on port ${GLM_PORT})"
+        fi ;;
+      down)
+        info "GLM health           : not responding on ${GLM_OCR_API_URL} (start: scripts/start_glm.sh -b)" ;;
+    esac
   else
     info "GLM health           : skipped (ENABLE_GLM=false) — Legacy/VietOCR/Modern OCR still work."
   fi

@@ -248,7 +248,40 @@ http_status() {
   esac
 }
 
-# GLM health probe — mirrors RUN_CONTEXT_FOR_CLAUDE.md. Returns 0 iff HTTP 200.
+# GLM readiness — "port 8080 listening" does NOT mean the model is loaded: a
+# cold start can spend minutes loading (or, first time online, downloading) the
+# MLX model. Prints exactly one state:
+#   down            nothing listening on GLM_PORT
+#   loading         port open but GET /health gives no answer — mlx_vlm.server
+#                   loads the model inside the request handler, which blocks its
+#                   event loop, so an unanswered /health means "load in flight"
+#   no-model        server idle with NO model loaded yet (lazy mode: the first
+#                   request triggers the load)
+#   ready:<model>   /health reports loaded_model — ready for inference
+#   unknown         something answers HTTP on the port but not like
+#                   mlx_vlm.server's /health (foreign service / other version)
+# GET /health is mlx_vlm.server's status endpoint (verified in the pinned
+# mlx-vlm 0.6.3 source: returns {"status":…, "loaded_model": <id|null>} and
+# NEVER triggers a model load). Deliberately not /v1/models (scans the whole
+# cache, and can block while a load holds the event loop) and never a POST to
+# /chat/completions from a check (that WOULD trigger a cold model load).
+glm_ready_state() {
+  if ! port_in_use "$GLM_PORT"; then echo "down"; return; fi
+  local body model
+  body="$(curl -s -m "${HEALTH_TIMEOUT:-5}" --noproxy '*' "${GLM_OCR_API_URL}/health" 2>/dev/null)" || body=""
+  if [ -z "$body" ]; then echo "loading"; return; fi
+  case "$body" in
+    *loaded_model*)
+      model="$(printf '%s' "$body" | sed -n 's/.*"loaded_model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+      if [ -n "$model" ]; then echo "ready:$model"; else echo "no-model"; fi ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+# GLM deep health probe — a real (tiny) /chat/completions inference. Returns 0
+# iff HTTP 200. NOTE: on a cold server this TRIGGERS the model load — use
+# glm_ready_state for read-only checks; keep this for explicit verification or
+# as a fallback when /health is unavailable.
 glm_health() {
   local code
   code="$(curl -s -o /dev/null -m "${HEALTH_TIMEOUT:-8}" -w "%{http_code}" \

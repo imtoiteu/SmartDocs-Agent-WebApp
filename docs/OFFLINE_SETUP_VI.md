@@ -17,7 +17,7 @@ kiểm tra mức sẵn sàng.
 ```bash
 scripts/setup.sh                        # venv chính + deps + .env + thư mục
 scripts/setup_offline.sh                # tải TẤT CẢ mô hình offline (cần mạng, một lần)
-scripts/setup_glm.sh --precache-layout  # (chỉ Apple Silicon) venv GLM + mô hình layout
+scripts/setup_glm.sh --precache         # (chỉ Apple Silicon) venv GLM + mô hình layout + mô hình máy chủ MLX
 scripts/check_offline.sh                # kiểm tra: dùng được / cần cài / đang dùng fallback
 scripts/start.sh                        # chạy hệ thống
 ```
@@ -41,7 +41,7 @@ scripts/start.sh                        # chạy hệ thống
 |---|---|---|---|
 | Paddle OCR Legacy / Modern | cache mô hình PaddleX tại `~/.paddlex/official_models/` (đổi qua `PADDLE_PDX_CACHE_HOME`) | `setup_offline.py` (pipeline Legacy/VietOCR; Modern qua `tools/warmup_modern_models.py`) hoặc lần OCR đầu có mạng | ⚠️ tải ở lần chạy đầu (cần mạng một lần) |
 | **VietOCR** | `models/vietocr/config.yml` **+** `vgg_transformer.pth` | `setup_offline.py` | OCR trả lỗi rõ ràng "chạy setup_offline" |
-| **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 trong `models/huggingface/hub/` + máy chủ MLX | `setup_glm.sh --precache-layout` | lỗi "pipeline.layout.model_dir is required" / thông báo server chưa chạy |
+| **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 **và** `mlx-community/GLM-OCR-bf16` trong `models/huggingface/hub/` + máy chủ MLX | `setup_glm.sh --precache` (= `--precache-layout` + `--precache-mlx`) | lỗi "pipeline.layout.model_dir is required" / thông báo server chưa chạy / lần khởi động đầu phải tải mô hình máy chủ |
 | **AI Chat / AI Rewrite / Agent** | LLM cục bộ **Qwen 2.5 1.5B** (mặc định, `CHAT_MODEL` = `QWEN_MODEL` = `FALLBACK_CHAT_MODEL`) | `setup_offline.py` | "No chat model could be loaded" |
 | Tóm tắt PhoBERT | `vinai/phobert-base-v2` | `setup_offline.py` | **fallback** sang TF-IDF trích xuất (vẫn chạy) |
 | Embeddings RAG | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | `setup_offline.py` | **fallback** sang truy hồi char-hash (vẫn chạy) |
@@ -60,6 +60,17 @@ Lưu ý:
   trong `~/.cache/huggingface` từ phiên bản cũ sẽ được di chuyển, không tải lại);
   sau đó chạy được với `HF_HUB_OFFLINE=1`. Mô hình chỉ có trong cache toàn cục vẫn
   chạy (fallback tương thích cũ) nhưng `check_offline.sh` sẽ nhắc chạy lại precache.
+- **Mô hình máy chủ MLX của GLM (`mlx-community/GLM-OCR-bf16`) cũng nằm trong dự án.**
+  `tools/glm_serve.sh` xuất cache hub của dự án trước khi khởi động `mlx_vlm.server`
+  và **nạp trước (preload)** mô hình ngay lúc khởi động — cổng chỉ mở khi suy luận
+  đã thực sự sẵn sàng, nên "cổng đang lắng nghe" là tín hiệu sẵn sàng đáng tin. Tải
+  trước khi có mạng bằng `setup_glm.sh --precache-mlx` (bản đã có trong
+  `~/.cache/huggingface` sẽ được di chuyển, không tải lại); nếu chưa precache, lần
+  khởi động máy chủ **đầu tiên** sẽ tải mô hình (cần mạng một lần). Khi máy chủ còn
+  đang nạp mô hình, GLM OCR trên UI trả lời *"GLM server is still loading the OCR
+  model. Please wait and retry."* thay vì lỗi kết nối khó hiểu, và `scripts/check.sh`
+  báo "GLM server starting/loading model". Đặt `GLM_PRELOAD=false` để quay về chế
+  độ nạp trễ (lazy).
 
 ---
 
@@ -91,8 +102,10 @@ scripts/check_offline.sh
 
 Báo cáo theo từng tính năng: **dùng được ngay**, **cần cài online**, hoặc **đang
 dùng fallback** — cùng Python/Pillow chính, config/weights VietOCR, cache Paddle,
-cả hai venv GLM, giá trị `pipeline.layout.model_dir`, và mô hình layout GLM đã cache
-hay chưa. Script không thay đổi gì.
+cả hai venv GLM, giá trị `pipeline.layout.model_dir`, và **hai dòng riêng cho hai mô
+hình GLM** (bộ dò layout PP-DocLayoutV3 và mô hình máy chủ MLX), mỗi dòng kiểm tra
+trong hub cục bộ của dự án. Script không thay đổi gì — trạng thái máy chủ GLM được
+thăm dò qua `GET /health` (không bao giờ gửi request khiến mô hình bị nạp).
 
 `scripts/check.sh` lo phần runtime/venv và trỏ sang đây cho ma trận mô hình.
 
@@ -101,13 +114,26 @@ snapshot HF hoàn chỉnh (config + weights) trong cache **cục bộ của dự
 (`models/huggingface/hub/`) — tải dở hoặc bị hủy giữa chừng sẽ báo **thiếu**, không phải
 ✅, nên kết quả kiểm tra luôn khớp với những gì ứng dụng thực sự nạp được. Mô hình chỉ
 nằm trong cache toàn cục `~/.cache/huggingface` KHÔNG được tính — ứng dụng không bao
-giờ nạp từ đó. (Giờ bao gồm cả mô hình layout GLM; bản chỉ có trong cache toàn cục
-sẽ được báo là cần chạy `scripts/setup_glm.sh --precache-layout`.)
+giờ nạp từ đó. (Bao gồm cả hai mô hình GLM; bản chỉ có trong cache toàn cục sẽ được
+báo là cần chạy `scripts/setup_glm.sh --precache-layout` / `--precache-mlx`.)
 
 ---
 
 ## Khắc phục sự cố
 
+- **GLM OCR lỗi `Failed to connect to API server at http://localhost:8080/v1/chat/completions within 30 seconds`**
+  trong khi `logs/glm.log` hiện `Loading model from: mlx-community/GLM-OCR-bf16` /
+  `Fetching 9 files: …%` — máy chủ MLX đang **khởi động nguội**: cổng đã lắng nghe
+  nhưng mô hình vẫn đang nạp (hoặc đang tải lần đầu), và cửa sổ kết nối 30 giây của
+  SDK glmocr hết hạn. Đã sửa ở ba tầng: `tools/glm_serve.sh` giờ **preload** mô hình
+  lúc khởi động (cổng chỉ mở khi suy luận sẵn sàng), UI trả lời *"GLM server is
+  still loading the OCR model. Please wait and retry."* thay cho lỗi thô đó, và
+  `scripts/check.sh` báo "GLM server starting/loading model; wait or check
+  logs/glm.log". Tránh hẳn việc tải lúc khởi động nguội bằng cách precache một lần
+  khi có mạng:
+  ```bash
+  scripts/setup_glm.sh --precache-mlx
+  ```
 - **Mô hình bị tải vào `~/.cache/huggingface` thay vì `models/`** (ứng dụng báo
   thiếu mô hình dù `setup_offline` "thành công") — đây là lỗi lệch cache: các thư
   viện HF chốt đường dẫn cache ngay lúc import, và một import chạy trước bước
@@ -121,7 +147,7 @@ sẽ được báo là cần chạy `scripts/setup_glm.sh --precache-layout`.)
   ```
   Mô hình đã hoàn chỉnh trong cache toàn cục sẽ được **sao chép** tự động vào
   `models/huggingface/hub/` (giữ nguyên snapshots/blobs/refs) — không tải lại.
-  Mô hình layout GLM giờ cũng nằm trong dự án (`setup_glm.sh --precache-layout`
+  Cả hai mô hình GLM giờ cũng nằm trong dự án (`setup_glm.sh --precache`
   di chuyển tương tự), nên khi `scripts/check_offline.sh` đã xanh hết,
   `~/.cache/huggingface` không còn cần cho SmartDocs và có thể xoá toàn bộ.
 - **`UNSUPPORTED Python …` / `Main venv is incomplete (missing imports: …)`** —
@@ -178,6 +204,6 @@ sẽ được báo là cần chạy `scripts/setup_glm.sh --precache-layout`.)
 
 Sau khi đã tải, giữ `OFFLINE=1` trong `.env`. Ứng dụng chỉ nạp mô hình
 HuggingFace / Argos / Stanza từ `MODEL_DIR`, không chạm mạng. Sao chép toàn bộ thư
-mục dự án (kèm `models/` — mô hình layout GLM giờ cũng ở trong đó) sang máy
-air-gapped để chạy không cần mạng; chỉ cache PaddleX (`~/.paddlex/official_models`)
-nằm ngoài thư mục dự án.
+mục dự án (kèm `models/` — cả hai mô hình GLM, bộ dò layout và mô hình máy chủ MLX,
+giờ cũng ở trong đó) sang máy air-gapped để chạy không cần mạng; chỉ cache PaddleX
+(`~/.paddlex/official_models`) nằm ngoài thư mục dự án.

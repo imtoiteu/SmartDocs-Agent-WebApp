@@ -37,12 +37,18 @@ fi
 
 if port_in_use "$GLM_PORT"; then
   warn "Port $GLM_PORT already in use — the GLM server may already be running."
-  if glm_health; then
-    ok "GLM server is already up and healthy on $GLM_OCR_API_URL"
-    exit 0
-  fi
-  err "Something is on port $GLM_PORT but not answering as GLM. Free it or set GLM_PORT."
-  exit 1
+  case "$(glm_ready_state)" in
+    ready:*)
+      ok "GLM server is already up with the model loaded on $GLM_OCR_API_URL"
+      exit 0 ;;
+    loading|no-model)
+      ok "GLM server is already running on $GLM_OCR_API_URL but the model is not"
+      ok "loaded yet — it is loading (or loads on first request). Watch logs/glm.log."
+      exit 0 ;;
+    *)
+      err "Something is on port $GLM_PORT but not answering as GLM. Free it or set GLM_PORT."
+      exit 1 ;;
+  esac
 fi
 
 info "Starting GLM-OCR MLX server"
@@ -54,8 +60,51 @@ info "  serve : $GLM_SERVE"
 if [ "$BACKGROUND" -eq 1 ]; then
   nohup "$GLM_SERVE" >>"$LOG_DIR/glm.log" 2>&1 &
   echo $! > "$GLM_PID_FILE"
-  ok "GLM server starting in background (PID $(cat "$GLM_PID_FILE")) — logs: logs/glm.log"
-  info "It may take a while to load the model. Check with: scripts/check.sh"
+  GPID="$(read_pid "$GLM_PID_FILE")"
+  ok "GLM server process started (PID $GPID) — logs: logs/glm.log"
+
+  # Three DISTINCT startup facts — never claim "ready" from a mere port probe:
+  #   1. process started        (PID alive)
+  #   2. HTTP server listening  (port open)
+  #   3. model loaded / READY   (glm_ready_state == ready:<model>)
+  # With the default preload (tools/glm_serve.sh passes --model) the port only
+  # opens once the model is loaded, so 2 usually implies 3. The wait is bounded:
+  # a first-ever ONLINE start downloads the model and can exceed it — that is
+  # reported as "still starting", not as failure. GLM_START_WAIT=0 skips waiting.
+  WAIT="${GLM_START_WAIT:-90}"
+  if [ "$WAIT" -le 0 ] 2>/dev/null; then
+    info "Not waiting for readiness (GLM_START_WAIT=0) — check later with: scripts/check.sh"
+    exit 0
+  fi
+  info "Waiting up to ${WAIT}s for readiness (a first online start downloads the model — may take longer)…"
+  LISTENING=0
+  ELAPSED=0
+  while [ "$ELAPSED" -lt "$WAIT" ]; do
+    if ! pid_alive "$GPID"; then
+      err "GLM server process exited during startup — last lines of logs/glm.log:"
+      tail -5 "$LOG_DIR/glm.log" 2>/dev/null | sed 's/^/         /' >&2
+      err "(A preload failure with OFFLINE model missing? Pre-cache it online:"
+      err " scripts/setup_glm.sh --precache-mlx)"
+      rm -f "$GLM_PID_FILE"
+      exit 1
+    fi
+    STATE="$(glm_ready_state)"
+    case "$STATE" in
+      ready:*)
+        [ "$LISTENING" -eq 1 ] || info "HTTP server listening on port $GLM_PORT"
+        ok "GLM server READY for inference (model loaded: ${STATE#ready:})"
+        exit 0 ;;
+      loading|no-model|unknown)
+        if [ "$LISTENING" -eq 0 ]; then
+          LISTENING=1
+          info "HTTP server listening on port $GLM_PORT — model still loading…"
+        fi ;;
+    esac
+    sleep 3
+    ELAPSED=$((ELAPSED + 3))
+  done
+  warn "GLM server process is up but the model is NOT loaded yet (still loading/downloading)."
+  warn "This is not an error — follow logs/glm.log and re-check with: scripts/check.sh"
 else
   exec "$GLM_SERVE"
 fi

@@ -393,9 +393,15 @@ class _Config:
         # Layout model for GLM self-hosted mode. glmocr requires
         # pipeline.layout.model_dir; setup_glm.sh writes this value into
         # mlx_config.yaml. May be a Hugging Face model id (default, cached in the
-        # DEFAULT HF cache) or an absolute local checkpoint directory.
+        # PROJECT-LOCAL hub) or an absolute local checkpoint directory.
         self.GLM_LAYOUT_MODEL_DIR: str = os.environ.get(
             "GLM_LAYOUT_MODEL_DIR", "PaddlePaddle/PP-DocLayoutV3_safetensors")
+        # The model the MLX server ITSELF loads (a different model from the
+        # layout detector above). Cached project-locally like every other model:
+        # 'scripts/setup_glm.sh --precache-mlx' primes it, and tools/glm_serve.sh
+        # exports the project HF cache before starting the server.
+        self.GLM_MLX_MODEL: str = os.environ.get(
+            "GLM_MODEL", "mlx-community/GLM-OCR-bf16")
         # Local MLX model server (OpenAI-compatible). Started manually via
         # tools/glm_serve.sh; the adapter health-checks it before each run.
         self.GLM_OCR_API_URL: str  = os.environ.get("GLM_OCR_API_URL", "http://localhost:8080")
@@ -546,9 +552,10 @@ class _Config:
         "check shows ✅ but the app says not-in-cache" symptom.
 
         ``include_default_cache=True`` also searches ``~/.cache/huggingface`` — used
-        ONLY to detect a GLM layout model stranded in the default cache by an
-        older ``setup_glm.sh --precache-layout`` (reported as needing re-priming,
-        never as project-local/ready).
+        ONLY to detect a GLM model (layout detector or the MLX server model)
+        stranded in the default cache by an older setup/server run (reported as
+        needing re-priming via ``setup_glm.sh --precache-*``, never as
+        project-local/ready).
         """
         name = "models--" + model_id.replace("/", "--")
         roots = [self.HF_HUB_DIR, self.HF_DIR]
@@ -658,6 +665,12 @@ class _Config:
         glm_global_only = (not glm_layout
                            and self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR,
                                                   include_default_cache=True))
+        # GLM MLX server model (the model mlx_vlm.server itself loads — distinct
+        # from the layout detector above). Same project-local-cache policy.
+        glm_mlx             = self._has_hf_model(self.GLM_MLX_MODEL)
+        glm_mlx_global_only = (not glm_mlx
+                               and self._has_hf_model(self.GLM_MLX_MODEL,
+                                                      include_default_cache=True))
 
         setup = "run scripts/setup_offline.sh (online)"
         vcfg_ok, vcfg_why = validate_vietocr_config(vietocr_cfg)
@@ -677,6 +690,12 @@ class _Config:
                 else "  ← Found in global cache but missing from project-local cache. "
                      "Run scripts/setup_glm.sh --precache-layout." if glm_global_only
                 else "  ← not cached (scripts/setup_glm.sh --precache-layout, online)")),
+            "glm_mlx_model": (glm_mlx, str(self.GLM_MLX_MODEL) + (
+                "" if glm_mlx
+                else "  ← Found in global cache but missing from project-local cache. "
+                     "Run scripts/setup_glm.sh --precache-mlx." if glm_mlx_global_only
+                else "  ← not cached (scripts/setup_glm.sh --precache-mlx, online; "
+                     "the first server start also downloads it project-locally)")),
         }
 
     def offline_readiness_report(self) -> str:
@@ -705,6 +724,7 @@ class _Config:
             ("Embeddings (RAG)",     r["embeddings"]),
             ("Argos offline transl.",r["argos"]),
             ("GLM layout model",     r["glm_layout_model"]),
+            ("GLM MLX server model", r["glm_mlx_model"]),
         ]
         # Paddle rows are three-state: ✅ cached in the runtime cache / ⚠️ will
         # download on first OCR run (needs internet once — NOT a failure: OFFLINE=1
@@ -738,6 +758,7 @@ class _Config:
             f"  AI Rewrite       : {'usable' if r['ai_rewrite'][0] else 'NEEDS setup_offline (Qwen rewrite model)'}",
             f"  Offline translate: {'usable' if r['argos'][0] else 'online Google only until Argos installed'}",
             f"  GLM OCR layout   : {'config+cache OK (needs MLX server running)' if r['glm_layout_model'][0] else 'NEEDS layout model cache (setup_glm.sh)'}",
+            f"  GLM MLX server   : {'model cached project-locally (start: scripts/start_glm.sh -b)' if r['glm_mlx_model'][0] else 'model NOT cached — first start needs internet (or setup_glm.sh --precache-mlx)'}",
         ]
         return "\n".join(lines)
 

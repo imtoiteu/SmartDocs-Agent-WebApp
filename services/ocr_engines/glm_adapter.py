@@ -92,6 +92,11 @@ class GLMOCREngine(OCREngine):
 
     engine_name = "glmocr"
 
+    # User-facing message for a listening-but-not-ready server (cold start:
+    # the MLX model is still loading, or first-run downloading). Deliberately a
+    # calm retry hint, NOT a fatal-looking connection error.
+    _LOADING_MSG = "GLM server is still loading the OCR model. Please wait and retry."
+
     def _server_up(self) -> bool:
         """Cheap TCP connect to the MLX model server. True if something is listening."""
         try:
@@ -102,6 +107,45 @@ class GLMOCREngine(OCREngine):
                 return True
         except Exception:
             return False
+
+    def _server_ready(self):
+        """Model-level readiness (``_server_up`` is only port-level).
+
+        mlx_vlm.server exposes ``GET /health`` → ``{"loaded_model": <id|null>,…}``
+        (verified in the pinned mlx-vlm 0.6.3 source); it never triggers a model
+        load. During a cold load the server's event loop is blocked (the load
+        runs inside the request handler), so /health not answering while the
+        port is open reliably means "still loading". Returns:
+
+          True  – a model is loaded; inference will answer
+          False – listening but still loading → tell the user to retry
+          None  – can't tell (no /health endpoint, foreign body, or lazy mode
+                  with no model loaded yet) → proceed; a resulting SDK
+                  connect-timeout is translated to the retry message instead
+
+        We deliberately do NOT probe ``/v1/models`` (it can block during a load
+        and scans the whole cache) and never POST ``/chat/completions`` as a
+        check (that WOULD trigger a cold model load).
+        """
+        import json
+        import urllib.error
+        import urllib.request
+
+        url = cfg.GLM_OCR_API_URL.rstrip("/") + "/health"
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                raw = r.read()
+        except urllib.error.HTTPError:
+            return None            # endpoint unsupported → don't rely on it
+        except Exception:
+            return False           # port open (checked before) but no answer → loading
+        try:
+            body = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            return None            # answers, but not like mlx_vlm — can't tell
+        if not isinstance(body, dict) or "loaded_model" not in body:
+            return None
+        return True if body.get("loaded_model") else None
 
     def _error(self, msg: str, w: int = 0, h: int = 0, ms: int = 0) -> dict:
         # Structured failure (NOT an exception) → the route returns it verbatim and
@@ -131,6 +175,9 @@ class GLMOCREngine(OCREngine):
             return self._error(
                 "GLM-OCR model server is not running on "
                 f"{cfg.GLM_OCR_API_URL}. Start it with tools/glm_serve.sh.", w, h)
+
+        if self._server_ready() is False:
+            return self._error(self._LOADING_MSG, w, h)
 
         # The GLM layout model lives in the PROJECT-LOCAL HF cache
         # (models/huggingface/hub — same cache as every other model; cached by
@@ -170,6 +217,14 @@ class GLMOCREngine(OCREngine):
                     f"GLM OCR timed out after {cfg.GLM_TIMEOUT}s.", w, h,
                     round((time.time() - t0) * 1000))
             if proc.returncode != 0:
+                combined = (proc.stderr or "") + (proc.stdout or "")
+                # glmocr's connect test raises "Failed to connect to API server
+                # at …/v1/chat/completions within 30 seconds" when the server is
+                # listening but the model load outlasted its window — a cold
+                # start, not a fatal failure. Show the retry message instead.
+                if "Failed to connect to API server" in combined:
+                    return self._error(self._LOADING_MSG, w, h,
+                                       round((time.time() - t0) * 1000))
                 tail = (proc.stderr or proc.stdout or "").strip().splitlines()
                 tail = " ".join(tail[-3:])[:300] if tail else "no output"
                 return self._error(f"GLM OCR failed: {tail}", w, h,

@@ -15,7 +15,8 @@
 #    * Argos offline translation packages      (installed language pairs listed)
 #    * GLM .venv-mlx / .venv-sdk               (imports)
 #    * GLM self-hosted config: pipeline.layout.model_dir present?
-#    * GLM layout model cached in the DEFAULT HF cache?
+#    * GLM layout model cached PROJECT-LOCALLY? (models/huggingface/hub)
+#    * GLM MLX server model cached PROJECT-LOCALLY? (mlx-community/GLM-OCR-bf16)
 #
 #  The model matrix comes from config.cfg.offline_readiness_report() so the
 #  script and the running app agree on exactly what "ready" means.
@@ -242,12 +243,33 @@ else
   info "GLM layout model     : not cached — 'scripts/setup_glm.sh --precache-layout' (online)"
 fi
 
-# --- GLM port + health ------------------------------------------------------
-if port_in_use "$GLM_PORT"; then
-  ok  "GLM port $GLM_PORT       : in use"
+# --- GLM MLX server model (the model mlx_vlm.server itself loads) ------------
+# Distinct from the layout detector above: this is the vision OCR model the
+# MLX server holds resident (default mlx-community/GLM-OCR-bf16). Same
+# project-local-hub policy — tools/glm_serve.sh exports HF_HUB_CACHE there, so
+# only a project-local copy makes the server start offline-clean.
+GLM_MLX_REPO_DIR="models--$(printf '%s' "$GLM_MODEL" | sed 's|/|--|g')"
+if compgen -G "$PROJ_HUB/$GLM_MLX_REPO_DIR" >/dev/null 2>&1; then
+  ok  "GLM MLX server model : $GLM_MODEL — cached in $PROJ_HUB (project-local)"
+elif compgen -G "$DEF_HUB/$GLM_MLX_REPO_DIR" >/dev/null 2>&1; then
+  warn "GLM MLX server model : Found in global cache but missing from project-local cache."
+  warn "                       Run scripts/setup_glm.sh --precache-mlx."
 else
-  info "GLM port $GLM_PORT       : free (server not running — optional)"
+  info "GLM MLX server model : $GLM_MODEL not cached — 'scripts/setup_glm.sh --precache-mlx'"
+  info "                       (online; the first 'scripts/start_glm.sh' also downloads it project-locally)"
 fi
+
+# --- GLM port + readiness -----------------------------------------------------
+# Port listening ≠ model loaded: a cold server holds the port while the MLX
+# model is still loading/downloading (glm_ready_state distinguishes the two).
+GLM_STATE="$(glm_ready_state)"
+case "$GLM_STATE" in
+  ready:*) ok  "GLM server           : READY — model loaded (${GLM_STATE#ready:})" ;;
+  loading) warn "GLM server           : port $GLM_PORT listening but the model is still loading — wait or check logs/glm.log" ;;
+  no-model) info "GLM server           : up, no model loaded yet (loads on first request)" ;;
+  unknown) warn "GLM server           : something on port $GLM_PORT does not answer like the GLM server" ;;
+  down)    info "GLM port $GLM_PORT       : free (server not running — optional)" ;;
+esac
 
 hr
 ok "Offline readiness report complete."
@@ -255,5 +277,5 @@ echo
 echo "To make a clean clone fully offline-ready:"
 echo "  scripts/setup_offline.sh               # Qwen(chat+rewrite), PhoBERT, embeddings, Paddle, VietOCR(+config.yml), Argos"
 echo "                                          # (wrapper — always uses the main venv Python; do NOT use bare 'python')"
-echo "  scripts/setup_glm.sh --precache-layout  # (Apple Silicon) GLM venvs + layout model cache"
+echo "  scripts/setup_glm.sh --precache          # (Apple Silicon) GLM venvs + layout model + MLX server model"
 exit "$FAIL"
