@@ -107,12 +107,20 @@ yêu cầu bật máy chủ GLM — không có gì bị sập.
 **Có GLM** (chỉ Apple Silicon) — cài đặt kiểu clean-clone, không dùng đường dẫn ngoài:
 
 ```bash
-scripts/setup_glm.sh         # tạo GLM-OCR/.venv-mlx trong repo, cài deps, và
-                             #   ghi GLM-OCR/mlx_config.yaml (chế độ selfhosted)
+scripts/setup.sh             # venv chính + requirements/glm-sdk.txt (deps SDK cho luồng UI)
+scripts/setup_glm.sh         # GLM-OCR/.venv-mlx từ requirements/glm-mlx-lock.txt (Py 3.10–3.12)
+                             #   đồng thời ghi GLM-OCR/mlx_config.yaml (selfhosted)
+scripts/check.sh             # kỳ vọng: "GLM SDK import (main): OK" + "GLM MLX import (glm): OK"
 scripts/start_glm.sh -b      # bật máy chủ mô hình (lần đầu sẽ nạp mô hình)
-scripts/check.sh             # kỳ vọng: "GLM health: 200"
-scripts/start_web.sh         # hoặc scripts/start.sh để bật cả hai
+scripts/start.sh             # bật cả stack; sau đó kỳ vọng "GLM health: 200"
 ```
+
+Vì sao có hai bước setup: giao diện SmartDocs import SDK `GLM-OCR/glmocr`
+**trong cùng tiến trình**, nên các deps của nó (`requirements/glm-sdk.txt`:
+PyMuPDF, wordfreq, …) phải nằm trong venv **chính** qua `setup.sh`. Máy chủ
+**mô hình MLX** chạy riêng trong `GLM-OCR/.venv-mlx`, được ghim bởi
+`requirements/glm-mlx-lock.txt` qua `setup_glm.sh`. `setup_glm.sh` yêu cầu
+Python 3.10/3.11/3.12 (từ chối 3.13/3.14 trừ khi truyền `--force`).
 
 Phân giải đường dẫn GLM mặc định nằm trong repo:
 

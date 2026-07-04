@@ -106,12 +106,20 @@ telling you to start the GLM server — nothing crashes.
 **With GLM** (Apple Silicon only) — clean-clone setup, no external paths:
 
 ```bash
-scripts/setup_glm.sh         # creates repo-local GLM-OCR/.venv-mlx, installs deps,
-                             #   and writes GLM-OCR/mlx_config.yaml (selfhosted)
+scripts/setup.sh             # main venv + requirements/glm-sdk.txt (SDK deps for the UI path)
+scripts/setup_glm.sh         # GLM-OCR/.venv-mlx from requirements/glm-mlx-lock.txt (Py 3.10–3.12)
+                             #   also writes GLM-OCR/mlx_config.yaml (selfhosted)
+scripts/check.sh             # expect: "GLM SDK import (main): OK" + "GLM MLX import (glm): OK"
 scripts/start_glm.sh -b      # start the model server (first run loads the model)
-scripts/check.sh             # expect: "GLM health: 200"
-scripts/start_web.sh         # or scripts/start.sh for both at once
+scripts/start.sh             # full stack; then expect "GLM health: 200"
 ```
+
+Why two setup steps: the SmartDocs UI imports the vendored `GLM-OCR/glmocr` SDK
+**in-process**, so its deps (`requirements/glm-sdk.txt`: PyMuPDF, wordfreq, …)
+go into the **main** venv via `setup.sh`. The separate MLX **model server** runs
+in `GLM-OCR/.venv-mlx`, pinned by `requirements/glm-mlx-lock.txt` via
+`setup_glm.sh`. `setup_glm.sh` requires Python 3.10/3.11/3.12 (it rejects
+3.13/3.14 unless you pass `--force`).
 
 GLM path resolution is repo-local by default:
 

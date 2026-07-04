@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  scripts/setup_glm.sh — create the REPO-LOCAL GLM-OCR venv + config.
+#  scripts/setup_glm.sh — create the REPO-LOCAL GLM MLX server venv (reproducible).
 #
 #  GLM-OCR is an OPTIONAL, third-party OCR engine vendored inside this repo at
-#  <repo>/GLM-OCR. This script prepares it WITHOUT touching anything outside the
-#  repo and without hardcoding any machine-specific path:
+#  <repo>/GLM-OCR. This script prepares the MLX MODEL-SERVER venv without
+#  hardcoding any machine-specific path:
 #
-#    * creates the venv  <GLM_OCR_DIR>/.venv-mlx   (GLM_OCR_DIR defaults to
+#    * selects a Python 3.10 / 3.11 / 3.12 interpreter (rejects 3.13/3.14 unless
+#      forced) — the known-good MLX stack is built for 3.12
+#    * creates the venv  <GLM_OCR_DIR>/.venv-mlx  (GLM_OCR_DIR defaults to
 #      <repo>/GLM-OCR; override via GLM_OCR_DIR in .env)
-#    * installs the glmocr SDK + selfhosted deps into it
-#    * installs the MLX model server (mlx-vlm) — Apple Silicon only
+#    * installs a reproducible env from requirements/glm-mlx-lock.txt (known-good
+#      freeze). If the lock is absent, falls back to the GLM-OCR requirements.
+#    * also installs requirements/glm-sdk.txt (light pure-python SDK deps)
+#    * verifies:  import mlx_vlm, mlx_lm, transformers
 #    * generates a selfhosted <GLM_OCR_DIR>/mlx_config.yaml if none exists
 #
-#  The MLX model server runs on Apple Silicon only. On other hosts the venv +
-#  SDK still install (so paths resolve), but the model server cannot run — that
+#  The mlx* wheels are Apple-Silicon only. On other hosts the venv is still
+#  created (so paths resolve), but the MLX install/verify cannot succeed — that
 #  is fine: GLM stays optional and the rest of SmartDocs is unaffected.
+#
+#  Env:
+#    GLM_SETUP_PYTHON=/path/to/python3.12   # pin the interpreter explicitly
+#    FORCE_GLM_PY=1                         # allow Python 3.13/3.14 anyway
 # ============================================================================
 set -euo pipefail
 
@@ -26,7 +34,10 @@ load_env
 normalize_env
 ensure_dirs
 
-info "GLM-OCR local setup"
+FORCE_GLM_PY="${FORCE_GLM_PY:-0}"
+case "${1:-}" in -f|--force) FORCE_GLM_PY=1 ;; esac
+
+info "GLM-OCR MLX server setup"
 hr
 info "Repo root   : $REPO_ROOT"
 info "GLM_OCR_DIR : $GLM_OCR_DIR"
@@ -43,43 +54,99 @@ IS_APPLE_SILICON=0
 if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
   IS_APPLE_SILICON=1
 else
-  warn "Host is not Apple Silicon — the MLX model server (mlx-vlm) cannot run here."
-  warn "The venv + SDK will still install so paths resolve, but you can only run"
-  warn "the GLM OCR engine end-to-end on an Apple-Silicon Mac."
+  warn "Host is not Apple Silicon — the MLX server (mlx-vlm/mlx-lm) cannot run here."
+  warn "The venv is still created so paths resolve, but the MLX install + verify"
+  warn "will not succeed. Run this on an Apple-Silicon Mac to use GLM end-to-end."
 fi
 
-# --- 3. Create the venv -----------------------------------------------------
+# --- 3. Select a supported Python interpreter (3.10 / 3.11 / 3.12) ----------
+# Returns the interpreter path via stdout; enforces the version policy.
+pick_python() {
+  local cands=()
+  [ -n "${GLM_SETUP_PYTHON:-}" ] && cands+=("$GLM_SETUP_PYTHON")
+  cands+=(python3.12 python3.11 python3.10 python3)
+  local c ver major minor
+  for c in "${cands[@]}"; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    ver="$("$c" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)" || continue
+    major="${ver%%.*}"; minor="${ver##*.}"
+    [ "$major" = "3" ] || continue
+    if [ "$minor" -ge 10 ] && [ "$minor" -le 12 ]; then
+      printf '%s\n' "$c"; return 0
+    fi
+  done
+  # Nothing in the 3.10–3.12 window. Honour an explicit force.
+  if [ "$FORCE_GLM_PY" = "1" ]; then
+    for c in "${cands[@]}"; do
+      command -v "$c" >/dev/null 2>&1 || continue
+      warn "Forcing unsupported Python: $("$c" -V 2>&1) (FORCE_GLM_PY=1)"
+      printf '%s\n' "$c"; return 0
+    done
+  fi
+  return 1
+}
+
+if ! PY_BOOT="$(pick_python)"; then
+  err "No supported Python found. GLM MLX needs Python 3.10, 3.11 or 3.12."
+  err "Install one (e.g. 'brew install python@3.12'), or point GLM_SETUP_PYTHON at it."
+  err "To use 3.13/3.14 anyway (unsupported): FORCE_GLM_PY=1 scripts/setup_glm.sh"
+  exit 1
+fi
+ok "Using Python: $PY_BOOT ($("$PY_BOOT" -V 2>&1))"
+
+# --- 4. Create the venv -----------------------------------------------------
 VENV="$GLM_OCR_DIR/.venv-mlx"
 if [ -x "$VENV/bin/python" ]; then
   ok "GLM venv already exists: $VENV"
 else
-  command -v python3 >/dev/null 2>&1 || { err "python3 not found on PATH."; exit 1; }
   info "Creating GLM venv: $VENV"
-  python3 -m venv "$VENV"
+  "$PY_BOOT" -m venv "$VENV"
   ok "Created $VENV"
 fi
 GLM_PY="$VENV/bin/python"
 
-# --- 4. Install the SDK + deps ---------------------------------------------
 info "Upgrading pip…"
 "$GLM_PY" -m pip install --upgrade pip >/dev/null
 
-info "Installing glmocr SDK + selfhosted deps (torch/transformers — large)…"
-"$GLM_PY" -m pip install "${GLM_OCR_DIR}[selfhosted]"
-ok "glmocr SDK installed"
-
-if [ "$IS_APPLE_SILICON" -eq 1 ]; then
-  info "Installing MLX model server (mlx-vlm)…"
-  if "$GLM_PY" -m pip install mlx-vlm; then
-    ok "mlx-vlm installed"
+# --- 5. Install the MLX server env (reproducible) ---------------------------
+MLX_LOCK="$REPO_ROOT/requirements/glm-mlx-lock.txt"
+if [ -f "$MLX_LOCK" ]; then
+  info "Installing MLX server from lock: requirements/glm-mlx-lock.txt"
+  if "$GLM_PY" -m pip install -r "$MLX_LOCK"; then
+    ok "MLX lock installed"
   else
-    warn "mlx-vlm install failed — you can retry: $GLM_PY -m pip install mlx-vlm"
+    err "MLX lock install failed."
+    [ "$IS_APPLE_SILICON" -eq 1 ] || err "(expected off Apple Silicon — mlx* wheels are macOS/arm64 only)"
+    exit 1
   fi
 else
-  info "Skipping mlx-vlm (Apple Silicon only)."
+  warn "requirements/glm-mlx-lock.txt not found — falling back to GLM-OCR requirements."
+  info "Installing glmocr[selfhosted] + mlx-vlm…"
+  "$GLM_PY" -m pip install "${GLM_OCR_DIR}[selfhosted]"
+  if [ "$IS_APPLE_SILICON" -eq 1 ]; then
+    "$GLM_PY" -m pip install mlx-vlm || warn "mlx-vlm install failed — retry manually."
+  fi
 fi
 
-# --- 5. Generate a selfhosted config if none exists ------------------------
+# --- 6. Also install the light SDK deps (harmless in this venv) -------------
+GLM_SDK_REQ="$REPO_ROOT/requirements/glm-sdk.txt"
+if [ -f "$GLM_SDK_REQ" ]; then
+  info "Installing GLM SDK deps (requirements/glm-sdk.txt)…"
+  "$GLM_PY" -m pip install -r "$GLM_SDK_REQ" && ok "GLM SDK deps installed"
+fi
+
+# --- 7. Verify the MLX imports ---------------------------------------------
+info "Verifying MLX imports…"
+if "$GLM_PY" -c "import mlx_vlm, mlx_lm, transformers; print('GLM MLX imports OK')"; then
+  ok "MLX imports verified"
+elif [ "$IS_APPLE_SILICON" -eq 1 ]; then
+  err "MLX imports failed on Apple Silicon — check the install output above."
+  exit 1
+else
+  warn "MLX imports unavailable (expected off Apple Silicon)."
+fi
+
+# --- 8. Generate a selfhosted config if none exists ------------------------
 CFG="$GLM_OCR_DIR/mlx_config.yaml"
 if [ -f "$CFG" ]; then
   ok "Config already present: $CFG (left untouched)"
@@ -107,6 +174,6 @@ echo
 echo "Detected GLM python : $(glm_python 2>/dev/null || echo "$GLM_PY")"
 echo
 echo "Next:"
-echo "  scripts/check.sh          # verify GLM paths / venv / health"
+echo "  scripts/check.sh          # verify GLM SDK + MLX imports, paths, health"
 echo "  scripts/start_glm.sh -b   # start the GLM model server (Apple Silicon)"
 echo "  scripts/start.sh          # full stack (starts GLM if ENABLE_GLM=true)"

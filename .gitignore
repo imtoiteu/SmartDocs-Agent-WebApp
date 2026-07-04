@@ -71,3 +71,5 @@ Thumbs.db
 
 # ── Local agent / editor scaffolding (not application code) ────────────────
 .claude/
+# Fix/debug context bundles dropped in by the developer — never publish these
+CLAUDE_FIX_CONTEXT/

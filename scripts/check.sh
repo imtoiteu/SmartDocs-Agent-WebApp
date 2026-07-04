@@ -31,7 +31,7 @@ info "Repo root : $REPO_ROOT"
 # --- Python -----------------------------------------------------------------
 if PY="$(resolve_python)"; then
   PYVER="$("$PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
-  ok "Python: $PY (v$PYVER)"
+  ok "Main SmartDocs Python: $PY (v$PYVER)"
   case "$PYVER" in
     3.10.*|3.11.*|3.12.*) : ;;
     3.1[3-9].*|4.*)  warn "Python $PYVER is newer than the verified 3.10 — deps may not resolve." ;;
@@ -94,10 +94,37 @@ else
   info "Repo-local GLM venv  : missing ($GLM_VENV) — create with scripts/setup_glm.sh"
 fi
 
+GLM_PY_DETECTED=""
 if GLM_PY_DETECTED="$(glm_python 2>/dev/null)"; then
-  ok  "Detected GLM python  : $GLM_PY_DETECTED"
+  GLM_PYVER="$("$GLM_PY_DETECTED" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
+  ok  "Detected GLM python  : $GLM_PY_DETECTED (v$GLM_PYVER)"
 else
   info "Detected GLM python  : none found (repo-local venv not created yet)"
+fi
+
+# (A) Can the MAIN SmartDocs Python import the vendored GLM-OCR SDK in-process?
+#     This is the Flask/UI path that failed with missing dotenv/fitz/portalocker.
+if [ -n "$PY" ] && [ -d "$GLM_OCR_DIR/glmocr" ]; then
+  if PYTHONPATH="$GLM_OCR_DIR" "$PY" -c "from dotenv import dotenv_values; import fitz; import portalocker; import glmocr.config; import glmocr.utils.image_utils; import glmocr.utils.lock_utils; print('GLM SDK imports OK')" >/dev/null 2>&1; then
+    ok  "GLM SDK import (main): OK (main Python can import glmocr)"
+  else
+    warn "GLM SDK import (main): FAILED — run scripts/setup.sh (installs requirements/glm-sdk.txt)"
+    MISSING="$(PYTHONPATH="$GLM_OCR_DIR" "$PY" -c "from dotenv import dotenv_values; import fitz; import portalocker; import glmocr.config; import glmocr.utils.image_utils; import glmocr.utils.lock_utils" 2>&1 | tail -1)"
+    [ -n "$MISSING" ] && printf "         ↳ %s\n" "$MISSING" >&2
+  fi
+else
+  info "GLM SDK import (main): skipped (no main Python or GLM-OCR/glmocr not present)"
+fi
+
+# (B) Can the GLM venv Python import the MLX server deps?
+if [ -n "$GLM_PY_DETECTED" ]; then
+  if "$GLM_PY_DETECTED" -c "import mlx_vlm, mlx_lm, transformers; print('GLM MLX imports OK')" >/dev/null 2>&1; then
+    ok  "GLM MLX import (glm) : OK (mlx_vlm, mlx_lm, transformers)"
+  else
+    info "GLM MLX import (glm) : not available (Apple-Silicon only, or run scripts/setup_glm.sh)"
+  fi
+else
+  info "GLM MLX import (glm) : skipped (GLM venv not created yet)"
 fi
 
 if port_in_use "$GLM_PORT"; then

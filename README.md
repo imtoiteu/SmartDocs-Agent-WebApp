@@ -47,10 +47,20 @@ scripts/stop.sh         # stop background services (web + GLM)
 (`GLM-OCR/`); no external path needed on a clean clone:
 
 ```bash
-scripts/setup_glm.sh    # create repo-local GLM-OCR/.venv-mlx + install deps + config
+scripts/setup.sh        # also installs requirements/glm-sdk.txt into the main venv,
+                        #   so the Flask/UI path can import the GLM-OCR SDK in-process
+scripts/setup_glm.sh    # create GLM-OCR/.venv-mlx from requirements/glm-mlx-lock.txt
+scripts/check.sh        # verifies GLM SDK import (main Python) + MLX import (GLM Python)
 scripts/start_glm.sh -b # start the GLM model server in the background
-scripts/check.sh        # shows GLM_OCR_DIR, GLM python, venv, port 8080, health
+scripts/start.sh        # full stack
 ```
+
+Two dependency sets make the GLM path reproducible on a clean clone:
+
+- `requirements/glm-sdk.txt` — light SDK deps (PyMuPDF, wordfreq, …) that the
+  **main** SmartDocs venv needs because the UI imports `GLM-OCR/glmocr` in-process.
+- `requirements/glm-mlx-lock.txt` — pinned, known-good freeze for the **GLM
+  MLX server** venv (`GLM-OCR/.venv-mlx`, Python 3.10–3.12, Apple Silicon).
 
 To use an external GLM-OCR checkout instead, set `GLM_OCR_DIR=/path/to/GLM-OCR`
 in `.env`. GLM stays optional: `ENABLE_GLM=false scripts/start.sh` runs SmartDocs

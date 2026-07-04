@@ -52,6 +52,18 @@ else
   warn "requirements.txt not found — skipping dependency install"
 fi
 
+# GLM-OCR SDK deps: the Flask/UI path imports the vendored GLM-OCR SDK
+# in-process, so the MAIN venv needs its runtime deps (PyMuPDF, wordfreq, …).
+# Additive over requirements.txt — see requirements/glm-sdk.txt.
+GLM_SDK_REQ="$REPO_ROOT/requirements/glm-sdk.txt"
+if [ -f "$GLM_SDK_REQ" ]; then
+  info "Installing GLM-OCR SDK deps (requirements/glm-sdk.txt) into the main venv…"
+  "$VENV_PY" -m pip install -r "$GLM_SDK_REQ"
+  ok "GLM-OCR SDK deps installed"
+else
+  warn "requirements/glm-sdk.txt not found — GLM OCR from the UI may hit missing modules"
+fi
+
 # --- 3. Seed .env -----------------------------------------------------------
 if [ ! -f "$REPO_ROOT/.env" ] && [ -f "$REPO_ROOT/.env.example" ]; then
   cp "$REPO_ROOT/.env.example" "$REPO_ROOT/.env"
@@ -68,6 +80,7 @@ hr
 ok "Setup complete."
 echo
 echo "Next:"
-echo "  scripts/check.sh       # verify environment, ports, health"
+echo "  scripts/check.sh       # verify environment, ports, GLM SDK/MLX imports, health"
+echo "  scripts/setup_glm.sh   # (optional, Apple Silicon) create the GLM MLX server venv"
 echo "  scripts/start.sh       # start the full local stack (GLM if enabled)"
 echo "  scripts/start_web.sh   # start only the web app"
