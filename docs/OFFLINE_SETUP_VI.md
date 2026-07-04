@@ -39,7 +39,7 @@ scripts/start.sh                        # chạy hệ thống
 
 | Tính năng | Cần (cục bộ) | Được tải bởi | Nếu thiếu → |
 |---|---|---|---|
-| Paddle OCR Legacy / Modern | cache mô hình PaddleX | `setup_offline.py` (hoặc lần OCR đầu có mạng) | tải ở lần chạy đầu (cần mạng một lần) |
+| Paddle OCR Legacy / Modern | cache mô hình PaddleX tại `~/.paddlex/official_models/` (đổi qua `PADDLE_PDX_CACHE_HOME`) | `setup_offline.py` (pipeline Legacy/VietOCR; Modern qua `tools/warmup_modern_models.py`) hoặc lần OCR đầu có mạng | ⚠️ tải ở lần chạy đầu (cần mạng một lần) |
 | **VietOCR** | `models/vietocr/config.yml` **+** `vgg_transformer.pth` | `setup_offline.py` | OCR trả lỗi rõ ràng "chạy setup_offline" |
 | **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 trong HF cache mặc định + máy chủ MLX | `setup_glm.sh --precache-layout` | lỗi "pipeline.layout.model_dir is required" / thông báo server chưa chạy |
 | **AI Chat / AI Rewrite / Agent** | LLM cục bộ **Qwen 2.5 1.5B** (mặc định, `CHAT_MODEL` = `QWEN_MODEL` = `FALLBACK_CHAT_MODEL`) | `setup_offline.py` | "No chat model could be loaded" |

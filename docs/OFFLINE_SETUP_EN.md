@@ -40,7 +40,7 @@ scripts/start.sh                        # run the stack
 
 | Feature | Needs (local) | Cached by | Missing → |
 |---|---|---|---|
-| Legacy / Modern Paddle OCR | PaddleX model cache | `setup_offline.py` (or first online OCR run) | downloads on first run (needs internet once) |
+| Legacy / Modern Paddle OCR | PaddleX model cache in `~/.paddlex/official_models/` (override: `PADDLE_PDX_CACHE_HOME`) | `setup_offline.py` (Legacy/VietOCR pipeline; Modern via `tools/warmup_modern_models.py`) or first online OCR run | ⚠️ downloads on first run (needs internet once) |
 | **VietOCR** | `models/vietocr/config.yml` **+** `vgg_transformer.pth` | `setup_offline.py` | OCR returns a clear "run setup_offline" error |
 | **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 in the default HF cache + MLX server | `setup_glm.sh --precache-layout` | "pipeline.layout.model_dir is required" / server-not-running toast |
 | **AI Chat / AI Rewrite / Agent** | local **Qwen 2.5 1.5B** (the default, `CHAT_MODEL` = `QWEN_MODEL` = `FALLBACK_CHAT_MODEL`) | `setup_offline.py` | "No chat model could be loaded" |

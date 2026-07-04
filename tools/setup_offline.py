@@ -397,17 +397,27 @@ try:
     draw.text((10, 20), "SmartDocs test", fill=(0, 0, 0))
     img.save(str(test_img))
 
-    print("  Initializing PaddleOCR (downloads models on first use)…")
+    # PaddleOCR 3.x (PaddleX) caches models in
+    # <PADDLE_PDX_CACHE_HOME or ~/.paddlex>/official_models/ — NOT in models/ or
+    # the HF cache. This prewarm writes into that SAME runtime cache the app uses.
+    _pdx = os.environ.get("PADDLE_PDX_CACHE_HOME", str(Path.home() / ".paddlex"))
+    print(f"  Runtime model cache: {_pdx}/official_models")
+    print("  Initializing PaddleOCR PP-OCRv5 (the Legacy engine + VietOCR detector pipeline)…")
     try:
         import paddle
         paddle.disable_signal_handler()
     except Exception:
         pass
     from paddleocr import PaddleOCR
-    ocr = PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False)
+    # Same pipeline as services/ocr_engines/paddle_adapter.py + vietocr_adapter.py,
+    # so the models cached here are exactly the ones the app loads offline.
+    ocr = PaddleOCR(ocr_version="PP-OCRv5",
+                    use_doc_orientation_classify=False, use_doc_unwarping=False)
     ocr.predict(str(test_img))
     test_img.unlink(missing_ok=True)
-    print("  ✅ PaddleOCR ready")
+    print("  ✅ PaddleOCR (Legacy/VietOCR pipeline) ready")
+    print("  ℹ️  PaddleOCR Modern (PP-StructureV3/PP-OCRv6) models are larger and")
+    print("     prewarmed separately: python tools/warmup_modern_models.py (online)")
 except Exception as e:
     if test_img.exists():
         test_img.unlink(missing_ok=True)

@@ -429,17 +429,52 @@ class _Config:
         logger.info(f"[Config] HF cache : {self.HF_DIR / 'hub'}")
         logger.info(f"[Config] Argos dir: {self.ARGOS_DIR}")
 
+    def paddle_cache_status(self) -> dict:
+        """Inspect PaddleOCR's ACTUAL runtime model cache.
+
+        PaddleOCR 3.x delegates model management to PaddleX, which stores
+        downloaded models in <PADDLE_PDX_CACHE_HOME or ~/.paddlex>/official_models/
+        /<MODEL_NAME>/  (paddlex source: utils/cache.py:28-29 and
+        inference/utils/official_models.py:880). The old check globbed the HF
+        cache (models--PaddlePaddle--*), where these models NEVER land — so the
+        report said ❌ while OCR worked fine. Pure filesystem; never imports paddle.
+
+        Returns {"cache_dir": str, "models": [names], "det": [..], "rec": [..]}.
+        """
+        env = os.environ.get("PADDLE_PDX_CACHE_HOME", "").strip()
+        roots = []
+        if env:
+            roots.append(Path(env) / "official_models")
+        roots.append(Path.home() / ".paddlex" / "official_models")
+        models, used_root = [], roots[-1]
+        for root in roots:
+            try:
+                if root.is_dir():
+                    names = sorted(d.name for d in root.iterdir() if d.is_dir())
+                    if names:
+                        models, used_root = names, root
+                        break
+            except Exception:
+                pass
+        return {
+            "cache_dir": str(used_root),
+            "models":    models,
+            "det":       [n for n in models if "det" in n.lower()],
+            "rec":       [n for n in models if "rec" in n.lower()],
+        }
+
     def check_models(self) -> dict:
         """
         Check which local models are available.
         Returns a dict of {model_name: bool (exists)}.
         """
         hf = self.HF_DIR   # models/huggingface/ — models--* live directly here
+        paddle = self.paddle_cache_status()
         results = {
             "qwen":       any(hf.glob("models--Qwen--*"))                   if hf.exists() else False,
             "phobert":    any(hf.glob("models--vinai--*"))                   if hf.exists() else False,
-            "paddle_det": any(hf.glob("models--PaddlePaddle--*det*"))        if hf.exists() else False,
-            "paddle_rec": any(hf.glob("models--PaddlePaddle--*rec*"))        if hf.exists() else False,
+            "paddle_det": bool(paddle["det"]),
+            "paddle_rec": bool(paddle["rec"]),
             "vietocr":    Path(self.VIETOCR_WEIGHTS).exists()                if self.VIETOCR_WEIGHTS else False,
             "argos":      any(self.ARGOS_DIR.glob("packages/*/"))            if self.ARGOS_DIR.exists() else False,
         }
@@ -582,7 +617,6 @@ class _Config:
     def offline_readiness_report(self) -> str:
         """Human-readable feature readiness matrix (used by check_offline.sh)."""
         r = self.check_offline_readiness()
-        paddle = self.check_models()
         mark = lambda ok: ("✅" if ok else "❌")
         rows = [
             ("VietOCR config.yml",   r["vietocr_config"]),
@@ -607,16 +641,25 @@ class _Config:
             ("Argos offline transl.",r["argos"]),
             ("GLM layout model",     r["glm_layout_model"]),
         ]
+        # Paddle rows are three-state: ✅ cached in the runtime cache / ⚠️ will
+        # download on first OCR run (needs internet once — NOT a failure: OFFLINE=1
+        # gates HF/Argos/Stanza, it does not block PaddleX model downloads).
+        pcache = self.paddle_cache_status()
+        _pmark = lambda hit: ("✅" if hit else "⚠️ ")
+        _pmsg = lambda hit: (
+            f"cached ({', '.join(hit)})" if hit else
+            "not cached — downloads on first OCR run (needs internet once; "
+            "air-gapped machines: run tools/warmup_modern_models.py or one online OCR first)"
+        )
         lines = [
             "  ── Offline model readiness ──────────────────────",
             f"  Mode       : {'🔒 OFFLINE (local only)' if self.OFFLINE else '🌐 ONLINE (downloads allowed)'}",
             f"  MODEL_DIR  : {self.MODEL_DIR}",
             f"  HF cache   : {self.HF_DIR}",
             f"  Argos dir  : {self.ARGOS_DIR}",
-            f"  {mark(paddle['paddle_det'])} Paddle det : "
-            + ("cached" if paddle['paddle_det'] else "downloads on first OCR run (needs internet once)"),
-            f"  {mark(paddle['paddle_rec'])} Paddle rec : "
-            + ("cached" if paddle['paddle_rec'] else "downloads on first OCR run (needs internet once)"),
+            f"  Paddle dir : {pcache['cache_dir']}",
+            f"  {_pmark(pcache['det'])} Paddle det : {_pmsg(pcache['det'])}",
+            f"  {_pmark(pcache['rec'])} Paddle rec : {_pmsg(pcache['rec'])}",
         ]
         for label, (ok, detail) in rows:
             lines.append(f"  {mark(ok)} {label:<30}: {detail}")
