@@ -6,7 +6,8 @@ Downloads whatever CHAT_MODEL resolves to (default: the local LLM
 Qwen/Qwen2.5-1.5B-Instruct). Use this to OPT INTO a larger chat model: set
 CHAT_MODEL=Qwen/Qwen2.5-3B-Instruct (or another id) in .env first, then run this.
 For the standard 1.5B default, `tools/setup_offline.py` already downloads it.
-The model is cached in models/huggingface/ (same dir as existing models).
+The model is cached in models/huggingface/hub/ (same project-local cache as
+every other model — never in ~/.cache/huggingface).
 
 Usage:
     source .venv/bin/activate  (or your venv)
@@ -32,9 +33,8 @@ os.environ.pop("TRANSFORMERS_OFFLINE",  None)
 MODEL_ID = cfg.CHAT_MODEL  # default Qwen/Qwen2.5-1.5B-Instruct; larger models opt-in via .env
 
 def check_exists(model_id: str) -> bool:
-    repo = "models--" + model_id.replace("/", "--")
-    snap_dir = cfg.HF_DIR / repo / "snapshots"
-    return snap_dir.exists() and any(snap_dir.iterdir())
+    # Project-local cache only (hub layout first, then legacy flat layout).
+    return cfg.hf_snapshot_dir(model_id) is not None
 
 
 def main():
@@ -42,7 +42,7 @@ def main():
     print("  SmartDocs AI Chat — Model Downloader")
     print("=" * 60)
     print(f"  Model      : {MODEL_ID}")
-    print(f"  Cache dir  : {cfg.HF_DIR}")
+    print(f"  Cache dir  : {cfg.HF_HUB_DIR}")
     print(f"  Approx size: ~3 GB (1.5B) / ~6–7 GB (3B)")
     print()
 
@@ -68,7 +68,7 @@ def main():
         t0 = time.time()
 
         print("  [1/2] Downloading tokenizer…")
-        tok = AutoTokenizer.from_pretrained(MODEL_ID, cache_dir=str(cfg.HF_DIR))
+        tok = AutoTokenizer.from_pretrained(MODEL_ID, cache_dir=str(cfg.HF_HUB_DIR))
         print("  [1/2] Tokenizer done.")
 
         print(f"  [2/2] Downloading model weights (dtype=float32 for CPU)…")
@@ -76,11 +76,11 @@ def main():
             MODEL_ID,
             torch_dtype=torch.float32,
             device_map=None,
-            cache_dir=str(cfg.HF_DIR),
+            cache_dir=str(cfg.HF_HUB_DIR),
         )
         elapsed = round(time.time() - t0, 1)
         print(f"\n✅ {MODEL_ID} downloaded in {elapsed}s")
-        print(f"   Cached at: {cfg.HF_DIR}")
+        print(f"   Cached at: {cfg.HF_HUB_DIR}")
 
         # Quick sanity test
         print("\n  Running quick inference test…")

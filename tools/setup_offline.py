@@ -20,6 +20,7 @@ After this completes, copy the entire project folder
     run_windows.bat     # Windows
 """
 
+import os
 import sys
 import shutil
 import subprocess
@@ -28,6 +29,61 @@ from pathlib import Path
 # ── Bootstrap path ────────────────────────────────────────────────────────────
 WEB_APP = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(WEB_APP))
+
+# ── Force the PROJECT-LOCAL HF cache BEFORE any HF-dependent import ───────────
+# transformers / huggingface_hub / sentence_transformers freeze their cache
+# location (HF_HOME / HF_HUB_CACHE / TRANSFORMERS_CACHE) into module constants
+# AT IMPORT TIME. The import gate below imports transformers, so these env vars
+# must be set FIRST — otherwise every download lands in ~/.cache/huggingface
+# while the app (which imports config before transformers) loads from
+# <repo>/models/huggingface/hub. That exact mismatch produced "setup says
+# downloaded, runtime says missing" on a clean MacBook clone.
+# The derivation below MUST stay identical to config._configure_hf_env()
+# (verified after `from config import cfg` further down — hard-fails on drift).
+
+
+def _dotenv_model_dir() -> str:
+    """Minimal stdlib read of MODEL_DIR from <repo>/.env (config uses python-dotenv,
+    but that may not be importable yet — and nothing HF-ish may be imported here)."""
+    try:
+        for line in (WEB_APP / ".env").read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export "):].lstrip()
+            if line.startswith("MODEL_DIR="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
+_model_dir_raw = os.environ.get("MODEL_DIR", "") or _dotenv_model_dir()
+MODELS_DIR = Path(_model_dir_raw).resolve() if _model_dir_raw else (WEB_APP / "models")
+HF_HOME_DIR = MODELS_DIR / "huggingface"
+HF_HUB = HF_HOME_DIR / "hub"
+HF_HUB.mkdir(parents=True, exist_ok=True)
+os.environ["HF_HOME"]            = str(HF_HOME_DIR)
+os.environ["HF_HUB_CACHE"]       = str(HF_HUB)
+os.environ["TRANSFORMERS_CACHE"] = str(HF_HUB)
+# sentence-transformers>=2.3 stores models in the HF hub cache above; an
+# inherited SENTENCE_TRANSFORMERS_HOME would move them OUT of it.
+os.environ.pop("SENTENCE_TRANSFORMERS_HOME", None)
+# This is a download run — inherited offline flags must not block it. (config
+# sets them again when OFFLINE=1; they are popped once more after config import.)
+os.environ.pop("HF_HUB_OFFLINE", None)
+os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
+# Default global HF cache — NEVER downloaded to or validated against; inspected
+# only to (a) report models stranded there and (b) migrate them locally.
+GLOBAL_HUB = Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _project_model_dir(model_id: str) -> Path:
+    return HF_HUB / ("models--" + model_id.replace("/", "--"))
+
+
+def _global_model_dir(model_id: str) -> Path:
+    return GLOBAL_HUB / ("models--" + model_id.replace("/", "--"))
 
 print()
 print("=" * 60)
@@ -115,21 +171,107 @@ if _missing:
     print("     No models were downloaded.")
     sys.exit(2)
 
-# ── Load config (sets HF env vars) ────────────────────────────────────────────
+# ── Load config (re-derives + re-asserts the same HF env vars) ────────────────
 from config import cfg
 
-MODELS_DIR = cfg.MODEL_DIR
-HF_HUB     = cfg.HF_DIR / "hub"
-ARGOS_DIR  = cfg.ARGOS_DIR
+ARGOS_DIR = cfg.ARGOS_DIR
 
-print(f"\n  MODEL_DIR : {MODELS_DIR}")
-print(f"  HF cache  : {HF_HUB}")
-print(f"  Argos dir : {ARGOS_DIR}")
+# The early bootstrap above and config._configure_hf_env() derive the cache from
+# MODEL_DIR independently — if they ever disagree, downloads and runtime would
+# split across two caches again. Refuse to continue on drift.
+if cfg.MODEL_DIR.resolve() != MODELS_DIR.resolve() or cfg.HF_HUB_DIR.resolve() != HF_HUB.resolve():
+    print()
+    print("  ❌ INTERNAL CACHE-PATH MISMATCH — refusing to download anything.")
+    print(f"     bootstrap MODEL_DIR : {MODELS_DIR}")
+    print(f"     config    MODEL_DIR : {cfg.MODEL_DIR}")
+    print(f"     bootstrap HF hub    : {HF_HUB}")
+    print(f"     config    HF hub    : {cfg.HF_HUB_DIR}")
+    print("     Check the MODEL_DIR line in .env (both derivations must match).")
+    sys.exit(2)
 
-# Allow downloads for this setup run
-import os
+# config sets HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE when OFFLINE=1 — this is a
+# download run, so clear them again.
 os.environ.pop("HF_HUB_OFFLINE", None)
 os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
+# ── Cache debug: prove which cache the HF libraries ACTUALLY use ──────────────
+# huggingface_hub froze its cache constant when the import gate above imported
+# transformers. If it is not the project-local hub, the env bootstrap regressed
+# (e.g. an HF import crept in before it) — hard-fail rather than download 6 GB
+# into the wrong cache.
+import huggingface_hub
+
+_effective_hub = Path(huggingface_hub.constants.HF_HUB_CACHE).resolve()
+print(f"\n  MODEL_DIR              : {MODELS_DIR}")
+print(f"  HF_HOME                : {os.environ['HF_HOME']}")
+print(f"  HF_HUB_CACHE           : {os.environ['HF_HUB_CACHE']}")
+print(f"  effective hub cache    : {_effective_hub}   (frozen at import time)")
+print(f"  cache_dir for downloads: {HF_HUB}")
+print(f"  Argos dir              : {ARGOS_DIR}")
+if _effective_hub != HF_HUB.resolve():
+    print()
+    print("  ❌ The HF libraries are using a DIFFERENT cache than the project-local one.")
+    print("     An HF-dependent import ran before the env bootstrap — this is a bug in")
+    print("     this script. Refusing to download into the wrong cache.")
+    sys.exit(2)
+
+# Per-model cache location report (project-local vs stranded-in-global).
+_HF_MODEL_IDS = []
+for _m in (cfg.QWEN_MODEL, cfg.CHAT_MODEL, cfg.FALLBACK_CHAT_MODEL, cfg.PHOBERT_MODEL,
+           "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"):
+    if _m and _m not in _HF_MODEL_IDS:
+        _HF_MODEL_IDS.append(_m)
+print()
+for _m in _HF_MODEL_IDS:
+    _proj = _project_model_dir(_m)
+    _glob = _global_model_dir(_m)
+    if _proj.exists() and cfg._hf_snapshot_complete(_proj):
+        _where = "project cache (complete)"
+    elif _glob.exists() and cfg._hf_snapshot_complete(_glob):
+        _where = "GLOBAL cache only (~/.cache/huggingface) — will migrate, no re-download"
+    elif _proj.exists() or _glob.exists():
+        _where = "partial/incomplete cache — will download"
+    else:
+        _where = "not cached — will download"
+    print(f"  {_m:<62}: {_where}")
+
+
+def _ensure_project_cached(model_id: str) -> bool:
+    """Make sure ``model_id`` is COMPLETE in the project-local hub cache.
+
+    Priority (never re-downloads what already exists somewhere usable):
+      1. already complete in models/huggingface/hub/  → nothing to do
+      2. complete in the GLOBAL ~/.cache/huggingface  → COPY the whole
+         models--* tree (snapshots/blobs/refs preserved; HF blob symlinks are
+         relative, so ``copytree(symlinks=True)`` keeps them valid)
+      3. otherwise                                    → caller downloads from HF
+
+    Returns True when the model is now complete locally (caller can and should
+    load with local_files_only=True), False when a network download is needed.
+    """
+    proj = _project_model_dir(model_id)
+    # Hub-dir-specific completeness (config.json + a weight file resolve). NOT
+    # cfg._has_hf_model(), which also accepts the legacy flat layout — the caller
+    # loads with cache_dir=<hub>, so only the hub copy counts here.
+    if proj.exists() and cfg._hf_snapshot_complete(proj):
+        return True
+    glob_dir = _global_model_dir(model_id)
+    if glob_dir.exists() and cfg._hf_snapshot_complete(glob_dir):
+        try:
+            size_gb = sum(f.stat().st_size for f in glob_dir.rglob("*") if f.is_file()) / (1024**3)
+            print(f"  ↻ {model_id}: found complete in global cache — copying "
+                  f"{size_gb:.1f} GB into {HF_HUB} (no re-download)…")
+            if proj.exists():              # partial/broken local copy → replace it
+                shutil.rmtree(proj)
+            shutil.copytree(glob_dir, proj, symlinks=True)
+            if cfg._hf_snapshot_complete(proj):
+                print(f"  ✅ {model_id}: migrated from global cache")
+                return True
+            print(f"  ⚠️  {model_id}: migrated copy is incomplete — falling back to download")
+        except Exception as e:
+            print(f"  ⚠️  {model_id}: migration from global cache failed ({e}) — falling back to download")
+    return False
+
 
 errors = []
 
@@ -148,20 +290,27 @@ for _m in (cfg.QWEN_MODEL, cfg.CHAT_MODEL, cfg.FALLBACK_CHAT_MODEL):
     if _m and _m not in _qwen_models:
         _qwen_models.append(_m)
 if len(_qwen_models) == 1:
-    print(f"\n[1/6] Local LLM (default) — {_qwen_models[0]}  [chat + rewrite + agent]")
+    print(f"\n[1/7] Local LLM (default) — {_qwen_models[0]}  [chat + rewrite + agent]")
 else:
-    print(f"\n[1/6] Local LLMs — {', '.join(_qwen_models)}  (extra model(s) from .env opt-in)")
+    print(f"\n[1/7] Local LLMs — {', '.join(_qwen_models)}  (extra model(s) from .env opt-in)")
 try:
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
 
     for _m in _qwen_models:
         try:
-            print(f"  ↓ {_m} — tokenizer…")
-            AutoTokenizer.from_pretrained(_m)
-            print(f"  ↓ {_m} — weights (1.5B≈3 GB / larger models bigger, please wait)…")
-            AutoModelForCausalLM.from_pretrained(_m, torch_dtype=torch.float32)
-            print(f"  ✅ {_m} ready")
+            # Migrate from ~/.cache/huggingface when complete there; download only
+            # when missing from BOTH caches. When the project cache is complete,
+            # load with local_files_only=True — pure offline, no revision check.
+            _local = _ensure_project_cached(_m)
+            print(f"  {'✓ verifying local copy' if _local else '↓ downloading'} {_m} — tokenizer…")
+            AutoTokenizer.from_pretrained(_m, cache_dir=str(HF_HUB), local_files_only=_local)
+            if not _local:
+                print(f"  ↓ {_m} — weights (1.5B≈3 GB / larger models bigger, please wait)…")
+            AutoModelForCausalLM.from_pretrained(_m, cache_dir=str(HF_HUB),
+                                                 local_files_only=_local,
+                                                 torch_dtype=torch.float32)
+            print(f"  ✅ {_m} ready in {HF_HUB}")
         except Exception as e:
             print(f"  ❌ {_m} failed: {e}")
             errors.append(f"Qwen {_m}: {e}")
@@ -172,17 +321,18 @@ except ImportError as e:
 # ══════════════════════════════════════════════════════════════════════════════
 #  2. PhoBERT (Vietnamese summarization)
 # ══════════════════════════════════════════════════════════════════════════════
-print(f"\n[2/6] PhoBERT — {cfg.PHOBERT_MODEL}")
+print(f"\n[2/7] PhoBERT — {cfg.PHOBERT_MODEL}")
 try:
     from transformers import AutoTokenizer, AutoModel
 
-    print("  Downloading tokenizer…")
-    AutoTokenizer.from_pretrained(cfg.PHOBERT_MODEL)
+    _local = _ensure_project_cached(cfg.PHOBERT_MODEL)
+    print(f"  {'Verifying local' if _local else 'Downloading'} tokenizer…")
+    AutoTokenizer.from_pretrained(cfg.PHOBERT_MODEL, cache_dir=str(HF_HUB), local_files_only=_local)
 
-    print("  Downloading model weights (~400 MB)…")
-    AutoModel.from_pretrained(cfg.PHOBERT_MODEL)
+    print(f"  {'Verifying local' if _local else 'Downloading'} model weights (~400 MB)…")
+    AutoModel.from_pretrained(cfg.PHOBERT_MODEL, cache_dir=str(HF_HUB), local_files_only=_local)
 
-    print("  ✅ PhoBERT ready")
+    print(f"  ✅ PhoBERT ready in {HF_HUB}")
 except ImportError as e:
     print(f"  ⚠️  Skipped (missing library): {e}")
 except Exception as e:
@@ -197,13 +347,18 @@ except Exception as e:
 # can't match paraphrases). Caching it here enables real semantic retrieval offline.
 # Keep in sync with EmbeddingEngine.SBERT_MODEL in services/chat_service.py.
 _SBERT_ID = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-print(f"\n[3/6] Embeddings (optional; hashing fallback if skipped) — {_SBERT_ID}")
+print(f"\n[3/7] Embeddings (optional; hashing fallback if skipped) — {_SBERT_ID}")
 try:
     from sentence_transformers import SentenceTransformer
 
-    print("  Downloading sentence-transformers model (~470 MB)…")
-    SentenceTransformer(_SBERT_ID)
-    print("  ✅ sentence-transformers ready (semantic RAG enabled)")
+    _local = _ensure_project_cached(_SBERT_ID)
+    print(f"  {'Verifying local' if _local else 'Downloading'} sentence-transformers model (~470 MB)…")
+    try:
+        SentenceTransformer(_SBERT_ID, cache_folder=str(HF_HUB), local_files_only=_local)
+    except TypeError:
+        # older sentence-transformers without the local_files_only kwarg
+        SentenceTransformer(_SBERT_ID, cache_folder=str(HF_HUB))
+    print(f"  ✅ sentence-transformers ready in {HF_HUB} (semantic RAG enabled)")
 except ImportError as e:
     print(f"  ⚠️  Skipped (missing library): {e}")
     print("     sentence-transformers IS in requirements.txt — a missing import here")
@@ -217,7 +372,7 @@ except Exception as e:
 #  4. VietOCR models  (pure download — no torch/paddle; run BEFORE PaddleOCR so a
 #     Paddle segfault can never block config.yml/weights generation)
 # ══════════════════════════════════════════════════════════════════════════════
-print("\n[4/6] VietOCR models")
+print("\n[4/7] VietOCR models")
 try:
     import urllib.request
     vietocr_dir = MODELS_DIR / "vietocr"
@@ -314,7 +469,7 @@ except Exception as e:
 # ══════════════════════════════════════════════════════════════════════════════
 _argos_packages_dir = ARGOS_DIR / "packages"
 _argos_packages_dir.mkdir(parents=True, exist_ok=True)
-print(f"\n[5/6] Argos Translate offline packages → {_argos_packages_dir}")
+print(f"\n[5/7] Argos Translate offline packages → {_argos_packages_dir}")
 
 # Must set env var BEFORE importing argostranslate (it reads it at import time)
 os.environ["ARGOS_PACKAGES_DIR"] = str(_argos_packages_dir)
@@ -409,7 +564,7 @@ except Exception as e:
 #     paddle.disable_signal_handler() first so Python handles signals normally.
 #     Best-effort; never fatal if the API is unavailable.
 # ══════════════════════════════════════════════════════════════════════════════
-print("\n[6/6] PaddleOCR models  (downloads on first predict(); run last for stability)")
+print("\n[6/7] PaddleOCR models  (downloads on first predict(); run last for stability)")
 test_img = MODELS_DIR / "_paddle_setup_test.png"
 try:
     from PIL import Image, ImageDraw
@@ -450,17 +605,61 @@ except Exception as e:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  7. FINAL VALIDATION — load every HF model with local_files_only=True from the
+#     PROJECT-LOCAL cache. This is the exact resolution the offline runtime uses,
+#     so "downloaded without error" can never again disagree with "the app can
+#     load it" (the global-vs-project cache-mismatch bug). The success banner and
+#     the exit code are GATED on the required (Qwen) models passing here.
+# ══════════════════════════════════════════════════════════════════════════════
+print(f"\n[7/7] Validate: local_files_only=True load from {HF_HUB}")
+hf_llm_validated = False
+try:
+    from transformers import AutoTokenizer as _VTok
+
+    _required_ids = list(_qwen_models)
+    _optional_ids = [m for m in (cfg.PHOBERT_MODEL, _SBERT_ID) if m and m not in _required_ids]
+    _required_failed = []
+    for _m in _required_ids + _optional_ids:
+        _is_required = _m in _required_ids
+        try:
+            _VTok.from_pretrained(_m, cache_dir=str(HF_HUB), local_files_only=True)
+            if not (_project_model_dir(_m).exists() and cfg._hf_snapshot_complete(_project_model_dir(_m))):
+                raise RuntimeError("tokenizer loads, but config.json/weights do not resolve "
+                                   "in the project cache (partial snapshot)")
+            print(f"  ✅ {_m} — offline-loadable from project cache")
+        except Exception as e:
+            if _global_model_dir(_m).exists():
+                print(f"  ❌ {_m}: Found in global cache but missing from project-local "
+                      f"cache. Re-run setup_offline.sh after fixing cache config.")
+            else:
+                print(f"  ❌ {_m}: NOT loadable offline from {HF_HUB}: {e}")
+            errors.append(f"offline validation {_m}: not loadable from project cache")
+            if _is_required:
+                _required_failed.append(_m)
+    hf_llm_validated = not _required_failed
+except Exception as e:
+    print(f"  ❌ validation step failed: {e}")
+    errors.append(f"offline validation: {e}")
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Summary
 # ══════════════════════════════════════════════════════════════════════════════
 print()
 print("=" * 60)
-if errors:
+if errors or not hf_llm_validated:
     print("  ⚠️  Setup completed with errors:")
     for e in errors:
         print(f"     • {e}")
     print()
-    print("  The app may still work for features whose models succeeded.")
+    if hf_llm_validated:
+        print("  The app may still work for features whose models succeeded.")
+    else:
+        print("  ❌ NOT offline-ready: the local LLM did not validate from the")
+        print(f"     project cache ({HF_HUB}).")
+        print("     Fix the errors above, then re-run scripts/setup_offline.sh.")
 else:
+    # Reaching this branch REQUIRES the [7/7] local_files_only validation of the
+    # Qwen model(s) from the project-local cache — never claim readiness without it.
     print("  ✅ All models downloaded successfully!")
     print()
     print("  The project is now OFFLINE-READY.")
@@ -510,3 +709,8 @@ try:
     print(f"  models/ total size: {gb:.1f} GB")
 except Exception:
     pass
+
+# Non-zero exit when the REQUIRED local LLM did not validate from the project
+# cache (optional-model failures keep exit 0 — their fallbacks still work).
+if not hf_llm_validated:
+    sys.exit(1)

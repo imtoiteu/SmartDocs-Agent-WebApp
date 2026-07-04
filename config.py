@@ -115,21 +115,36 @@ def _configure_hf_env(model_dir: Path):
     Must be called BEFORE any import of transformers, huggingface_hub,
     or argostranslate.
 
-    Directory layout inside MODEL_DIR:
+    Directory layout inside MODEL_DIR (standard HF hub layout):
         huggingface/
-            models--Qwen--Qwen2.5-1.5B-Instruct/
-            models--vinai--phobert-base-v2/
-            models--PaddlePaddle--*/
+            hub/
+                models--Qwen--Qwen2.5-1.5B-Instruct/
+                models--vinai--phobert-base-v2/
+                models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/
         argos/
             packages/
     """
     hf_local = model_dir / "huggingface"
-    hf_local.mkdir(parents=True, exist_ok=True)
+    hf_hub = hf_local / "hub"
+    hf_hub.mkdir(parents=True, exist_ok=True)
 
-    # HuggingFace: point to models/huggingface/ (models--* live directly here)
-    os.environ.setdefault("HF_HOME",           str(hf_local))
-    os.environ.setdefault("HF_HUB_CACHE",      str(hf_local))
-    os.environ.setdefault("TRANSFORMERS_CACHE", str(hf_local))
+    # HuggingFace: HF_HOME → models/huggingface/, hub cache → models/huggingface/hub/
+    # (the STANDARD layout, so `cache_dir=` args and env-var resolution agree).
+    # HARD-set (not setdefault): an HF_HOME/HF_HUB_CACHE inherited from the user's
+    # shell (typically ~/.cache/huggingface) would silently split the caches —
+    # setup downloads into one place, the app loads from another ("setup says
+    # downloaded, app says missing"). MODEL_DIR in .env is the single supported
+    # relocation knob; these paths derive from it.
+    for _k, _v in (("HF_HOME", str(hf_local)),
+                   ("HF_HUB_CACHE", str(hf_hub)),
+                   ("TRANSFORMERS_CACHE", str(hf_hub))):
+        if os.environ.get(_k) not in (None, "", _v):
+            logger.warning(f"[Config] Overriding inherited {_k}="
+                           f"{os.environ.get(_k)} → {_v} (derived from MODEL_DIR)")
+        os.environ[_k] = _v
+    # sentence-transformers>=2.3 stores models in the HF hub cache above; an
+    # inherited SENTENCE_TRANSFORMERS_HOME would move them OUT of it.
+    os.environ.pop("SENTENCE_TRANSFORMERS_HOME", None)
 
     # Argos Translate: MUST be set before argostranslate is imported.
     # argostranslate reads ARGOS_PACKAGES_DIR at module import time to build
@@ -280,8 +295,10 @@ class _Config:
         self.MODEL_DIR:   Path = _resolve_model_dir()
 
         # ── Configure HuggingFace env vars BEFORE any HF/transformers imports ─
-        # This redirects all HF downloads to models/huggingface/
+        # This redirects all HF downloads to models/huggingface/hub/
         self.HF_DIR:      Path = _configure_hf_env(self.MODEL_DIR)
+        # Standard hub cache (where HF_HUB_CACHE points and models actually live)
+        self.HF_HUB_DIR:  Path = self.HF_DIR / "hub"
 
         # ── Argos Translate data directory ───────────────────────────────────
         self.ARGOS_DIR:   Path = self.MODEL_DIR / "argos"
@@ -463,16 +480,52 @@ class _Config:
             "rec":       [n for n in models if "rec" in n.lower()],
         }
 
+    def hf_snapshot_dir(self, model_id: str):
+        """Locate the snapshot dir for a cached model in the PROJECT-LOCAL HF cache.
+
+        Searches the standard hub layout (``models/huggingface/hub/`` — where
+        HF_HUB_CACHE points and setup downloads) first, then the legacy flat
+        layout (``models--*`` directly under ``models/huggingface/``) written by
+        older setups. Prefers the revision pinned by ``refs/main``. Returns None
+        when the model is not cached. Filesystem-only; never touches the network.
+        """
+        repo = "models--" + model_id.replace("/", "--")
+        for root in (self.HF_HUB_DIR, self.HF_DIR):
+            repo_dir = root / repo
+            refs_main = repo_dir / "refs" / "main"
+            if refs_main.exists():
+                try:
+                    snap = repo_dir / "snapshots" / refs_main.read_text(encoding="utf-8").strip()
+                    if snap.exists():
+                        return snap
+                except Exception:
+                    pass
+            snapshots = repo_dir / "snapshots"
+            if snapshots.exists():
+                for snap in sorted(snapshots.iterdir()):
+                    if snap.is_dir():
+                        return snap
+        return None
+
+    def _hf_glob_any(self, pattern: str) -> bool:
+        """True if any project-local HF cache root (hub/ or legacy flat) matches."""
+        for root in (self.HF_HUB_DIR, self.HF_DIR):
+            try:
+                if root.exists() and any(root.glob(pattern)):
+                    return True
+            except Exception:
+                pass
+        return False
+
     def check_models(self) -> dict:
         """
         Check which local models are available.
         Returns a dict of {model_name: bool (exists)}.
         """
-        hf = self.HF_DIR   # models/huggingface/ — models--* live directly here
         paddle = self.paddle_cache_status()
         results = {
-            "qwen":       any(hf.glob("models--Qwen--*"))                   if hf.exists() else False,
-            "phobert":    any(hf.glob("models--vinai--*"))                   if hf.exists() else False,
+            "qwen":       self._hf_glob_any("models--Qwen--*"),
+            "phobert":    self._hf_glob_any("models--vinai--*"),
             "paddle_det": bool(paddle["det"]),
             "paddle_rec": bool(paddle["rec"]),
             "vietocr":    Path(self.VIETOCR_WEIGHTS).exists()                if self.VIETOCR_WEIGHTS else False,
@@ -485,18 +538,19 @@ class _Config:
         """Return the first HF cache dir that holds ``model_id`` (or None).
 
         By DEFAULT this searches ONLY the app's redirected cache
-        (``models/huggingface/``) — the exact place the running app loads models
-        from, because importing ``config`` sets ``HF_HOME`` there. Reporting a model
-        found in the user's DEFAULT ``~/.cache/huggingface`` as "ready" would be a
-        false positive: the app (with HF_HOME redirected) can't load it, which is
-        precisely the "check shows ✅ but the app says not-in-cache" symptom.
+        (``models/huggingface/hub/``, plus the legacy flat layout) — the exact
+        place the running app loads models from, because importing ``config`` sets
+        ``HF_HUB_CACHE`` there. Reporting a model found in the user's DEFAULT
+        ``~/.cache/huggingface`` as "ready" would be a false positive: the app
+        (with the cache redirected) can't load it, which is precisely the
+        "check shows ✅ but the app says not-in-cache" symptom.
 
         ``include_default_cache=True`` also searches ``~/.cache/huggingface`` — used
         ONLY for the GLM layout model, which deliberately lives in the default cache
         because glm_adapter.py strips HF_HOME before shelling out to glmocr.
         """
         name = "models--" + model_id.replace("/", "--")
-        roots = [self.HF_DIR, self.HF_DIR / "hub"]
+        roots = [self.HF_HUB_DIR, self.HF_DIR]
         if include_default_cache:
             roots.append(Path.home() / ".cache" / "huggingface" / "hub")
         for root in roots:

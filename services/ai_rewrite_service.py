@@ -55,11 +55,6 @@ def _env_float(name: str, default: float) -> float:
 #   • GEN_MAX_TIME_S     — wall-clock backstop passed to model.generate().
 GEN_LOCK_TIMEOUT_S = _env_float("CHAT_GEN_LOCK_TIMEOUT_S", 25.0)
 GEN_MAX_TIME_S     = _env_float("CHAT_GEN_MAX_TIME_S", 180.0)
-# Derive the local HF cache repo dir from the CONFIGURED model (was hardcoded to the
-# 1.5B repo, which made AI Rewrite always load 1.5B weights regardless of QWEN_MODEL —
-# and, via the B1 shared registry, dragged AI Chat down to 1.5B too).
-_QWEN_CACHE_REPO = "models--" + QWEN_MODEL.replace("/", "--")
-
 # ── Singleton state ───────────────────────────────────────────────────────────
 _qwen_lock       = threading.Lock()
 _qwen_model      = None
@@ -99,24 +94,13 @@ def _best_dtype():
 
 
 def resolve_local_qwen_path() -> Optional[Path]:
-    """Resolve the local snapshot path for the CONFIGURED QWEN_MODEL, if present."""
-    repo_dir = cfg.HF_DIR / _QWEN_CACHE_REPO
-    refs_main = repo_dir / "refs" / "main"
-    if refs_main.exists():
-        try:
-            snapshot_id = refs_main.read_text(encoding="utf-8").strip()
-            snap = repo_dir / "snapshots" / snapshot_id
-            if snap.exists():
-                return snap
-        except Exception:
-            pass
+    """Resolve the local snapshot path for the CONFIGURED QWEN_MODEL, if present.
 
-    snapshots_dir = repo_dir / "snapshots"
-    if snapshots_dir.exists():
-        for snap in sorted(snapshots_dir.iterdir()):
-            if snap.is_dir():
-                return snap
-    return None
+    Delegates to cfg.hf_snapshot_dir(): standard hub layout
+    (models/huggingface/hub/) first, then the legacy flat layout — the SAME
+    resolution chat_service / setup_offline.py / check_offline.sh use.
+    """
+    return cfg.hf_snapshot_dir(QWEN_MODEL)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

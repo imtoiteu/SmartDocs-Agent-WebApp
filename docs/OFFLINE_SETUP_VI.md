@@ -95,15 +95,33 @@ hay chưa. Script không thay đổi gì.
 `scripts/check.sh` lo phần runtime/venv và trỏ sang đây cho ma trận mô hình.
 
 Bản kiểm tra **nhận biết tính đầy đủ**: một mô hình chỉ được coi là sẵn sàng khi có
-snapshot HF hoàn chỉnh (config + weights) trong cache của ứng dụng
-(`models/huggingface/`) — tải dở hoặc bị hủy giữa chừng sẽ báo **thiếu**, không phải
-✅, nên kết quả kiểm tra luôn khớp với những gì ứng dụng thực sự nạp được. (Mô hình
-layout GLM là ngoại lệ, được kiểm tra trong cache mặc định `~/.cache/huggingface`.)
+snapshot HF hoàn chỉnh (config + weights) trong cache **cục bộ của dự án**
+(`models/huggingface/hub/`) — tải dở hoặc bị hủy giữa chừng sẽ báo **thiếu**, không phải
+✅, nên kết quả kiểm tra luôn khớp với những gì ứng dụng thực sự nạp được. Mô hình chỉ
+nằm trong cache toàn cục `~/.cache/huggingface` KHÔNG được tính — ứng dụng không bao
+giờ nạp từ đó. (Mô hình layout GLM là ngoại lệ, được kiểm tra trong cache mặc định
+`~/.cache/huggingface`.)
 
 ---
 
 ## Khắc phục sự cố
 
+- **Mô hình bị tải vào `~/.cache/huggingface` thay vì `models/`** (ứng dụng báo
+  thiếu mô hình dù `setup_offline` "thành công") — đây là lỗi lệch cache: các thư
+  viện HF chốt đường dẫn cache ngay lúc import, và một import chạy trước bước
+  chuyển hướng cache cục bộ. Đã sửa: `setup_offline.py` giờ ép
+  `HF_HOME`/`HF_HUB_CACHE` về `models/huggingface(/hub)` TRƯỚC mọi import HF, tải
+  với `cache_dir` tường minh, và **[7/7] xác thực** từng mô hình bằng
+  `local_files_only=True` từ cache dự án — không bao giờ in `OFFLINE-READY` khi
+  bước xác thực này chưa đạt. Chỉ cần chạy lại:
+  ```bash
+  scripts/setup_offline.sh
+  ```
+  Mô hình đã hoàn chỉnh trong cache toàn cục sẽ được **sao chép** tự động vào
+  `models/huggingface/hub/` (giữ nguyên snapshots/blobs/refs) — không tải lại.
+  Khi `scripts/check_offline.sh` đã xanh hết, có thể dọn đĩa bằng
+  `rm -rf ~/.cache/huggingface/hub/models--Qwen--*` v.v. (GIỮ LẠI
+  `models--PaddlePaddle--*` — mô hình layout GLM cố ý nằm ở đó).
 - **`UNSUPPORTED Python …` / `Main venv is incomplete (missing imports: …)`** —
   `setup_offline.sh` giờ từ chối tải mô hình khi môi trường hỏng. Venv chính
   BẮT BUỘC **Python 3.10** (3.11 chấp nhận); 3.12–3.14 hoàn toàn không cài được

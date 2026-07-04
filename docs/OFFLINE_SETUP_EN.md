@@ -99,15 +99,33 @@ model is cached. It changes nothing.
 `scripts/check.sh` covers the runtime/venv side and points here for the model matrix.
 
 The readiness check is **completeness-aware**: a model counts as ready only when a
-full HF snapshot (config + weights) resolves in the app's cache
-(`models/huggingface/`) — a half-finished or aborted download reports **missing**,
-not ✅, so the check can't disagree with what the app can actually load. (The GLM
-layout model is the one exception checked in the default `~/.cache/huggingface`.)
+full HF snapshot (config + weights) resolves in the app's **project-local** cache
+(`models/huggingface/hub/`) — a half-finished or aborted download reports **missing**,
+not ✅, so the check can't disagree with what the app can actually load. A model
+that exists only in the global `~/.cache/huggingface` does NOT count — the app
+never loads from there. (The GLM layout model is the one exception checked in the
+default `~/.cache/huggingface`.)
 
 ---
 
 ## Troubleshooting
 
+- **Models were downloaded into `~/.cache/huggingface` instead of `models/`** (the
+  app then says a model is missing although `setup_offline` "succeeded") — this was
+  a cache mismatch: HF libraries freeze their cache path at import time, and an
+  early import beat the project-local redirect. Fixed: `setup_offline.py` now
+  forces `HF_HOME`/`HF_HUB_CACHE` to `models/huggingface(/hub)` before ANY HF
+  import, downloads with an explicit `cache_dir`, and **[7/7] validates** every
+  model with `local_files_only=True` from the project cache — it never prints
+  `OFFLINE-READY` without that validation passing. Just re-run:
+  ```bash
+  scripts/setup_offline.sh
+  ```
+  Models already complete in the global cache are **copied** into
+  `models/huggingface/hub/` automatically (snapshots/blobs/refs preserved) — no
+  re-download. Once `scripts/check_offline.sh` is all-green you may reclaim disk
+  with `rm -rf ~/.cache/huggingface/hub/models--Qwen--*` etc. (keep
+  `models--PaddlePaddle--*` — the GLM layout model intentionally lives there).
 - **`UNSUPPORTED Python …` / `Main venv is incomplete (missing imports: …)`** —
   `setup_offline.sh` now refuses to download anything when the environment is
   broken. The main venv REQUIRES **Python 3.10** (3.11 tolerated); 3.12–3.14

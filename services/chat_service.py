@@ -379,24 +379,13 @@ def cancel_generation() -> bool:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _hf_snapshot(model_id: str) -> Optional[Path]:
-    """Locate a downloaded HF model snapshot folder."""
-    repo_name = "models--" + model_id.replace("/", "--")
-    repo_dir  = cfg.HF_DIR / repo_name
-    refs_main = repo_dir / "refs" / "main"
-    if refs_main.exists():
-        try:
-            snap_id = refs_main.read_text(encoding="utf-8").strip()
-            snap    = repo_dir / "snapshots" / snap_id
-            if snap.exists():
-                return snap
-        except Exception:
-            pass
-    snapshots = repo_dir / "snapshots"
-    if snapshots.exists():
-        for snap in sorted(snapshots.iterdir()):
-            if snap.is_dir():
-                return snap
-    return None
+    """Locate a downloaded HF model snapshot folder (project-local cache).
+
+    Delegates to cfg.hf_snapshot_dir(), which searches the standard hub layout
+    (models/huggingface/hub/) first, then the legacy flat layout — the SAME
+    resolution setup_offline.py and check_offline.sh use.
+    """
+    return cfg.hf_snapshot_dir(model_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
