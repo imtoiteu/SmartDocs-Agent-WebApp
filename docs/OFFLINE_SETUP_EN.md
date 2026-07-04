@@ -108,6 +108,17 @@ layout model is the one exception checked in the default `~/.cache/huggingface`.
 
 ## Troubleshooting
 
+- **`UNSUPPORTED Python …` / `Main venv is incomplete (missing imports: …)`** —
+  `setup_offline.sh` now refuses to download anything when the environment is
+  broken. The main venv REQUIRES **Python 3.10** (3.11 tolerated); 3.12–3.14
+  cannot install `paddlepaddle`/`Pillow 10.2.0` at all. Fix the venv first:
+  ```bash
+  brew install python@3.10          # macOS, if 3.10 is missing
+  scripts/setup.sh --reset-venv     # recreate ./.venv with a supported Python
+  scripts/setup_offline.sh          # then prime the models
+  ```
+  These are **environment** errors, not missing-model errors — none of the
+  per-model rows mean anything until the venv is complete.
 - **Setup printed `No module named 'vietocr' / 'PIL' / 'argostranslate' / 'sentence_transformers'`** —
   you ran the tool with the wrong (system) Python. Use the wrapper:
   ```bash

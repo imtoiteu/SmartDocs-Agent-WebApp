@@ -29,15 +29,20 @@ hr
 info "Repo root : $REPO_ROOT"
 
 # --- Python -----------------------------------------------------------------
+PY_UNSUPPORTED=0
 if PY="$(resolve_python)"; then
-  PYVER="$("$PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
+  PYVER="$(python_version_of "$PY")"
   ok "Main SmartDocs Python: $PY (v$PYVER)"
-  case "$PYVER" in
-    3.10.*|3.11.*|3.12.*) : ;;
-    3.1[3-9].*|4.*)  warn "Python $PYVER is newer than the verified 3.10 — deps may not resolve." ;;
-    3.[0-9].*)       warn "Python $PYVER is older than the recommended 3.10." ;;
-    *)               warn "Could not parse Python version." ;;
-  esac
+  SUP=0; main_python_support "$PYVER" || SUP=$?
+  if [ "$SUP" -ge 2 ]; then
+    err "UNSUPPORTED Python version $PYVER for the main venv (required: 3.10; tolerated: 3.11)."
+    err "paddlepaddle/Pillow-10.2.0 have no wheels for it — requirements.txt CANNOT install."
+    err "Recreate the venv:  scripts/setup.sh --reset-venv   (needs python3.10 installed)"
+    PY_UNSUPPORTED=1
+    FAIL=1
+  elif [ "$SUP" -eq 1 ]; then
+    warn "Python $PYVER is tolerated but not fully verified — 3.10 is the verified version."
+  fi
 else
   err "No Python interpreter found. Run scripts/setup.sh."
   FAIL=1
@@ -48,8 +53,13 @@ fi
 if [ -n "$PY" ]; then
   if "$PY" -c 'import flask' >/dev/null 2>&1; then
     ok "Flask import OK"
+  elif [ "$PY_UNSUPPORTED" -eq 1 ]; then
+    err "Flask not importable — the venv is INCOMPLETE because of the unsupported"
+    err "Python above (pip install failed there). Fix the Python version first;"
+    err "the missing-module errors are a consequence, not separate problems."
+    FAIL=1
   else
-    err "Flask not importable — run scripts/setup.sh to install requirements.txt"
+    err "Flask not importable — venv INCOMPLETE. Run scripts/setup.sh to install requirements.txt"
     FAIL=1
   fi
   # Import the app's own config (validates the project is on sys.path + parseable).
@@ -72,14 +82,23 @@ fi
 
 # --- Web port + health ------------------------------------------------------
 hr
+WEB_PORT_UP=0
 if port_in_use "$SMARTDOCS_PORT"; then
+  WEB_PORT_UP=1
   ok "Web port $SMARTDOCS_PORT: in use (SmartDocs likely running)"
 else
   info "Web port $SMARTDOCS_PORT: free (SmartDocs not running)"
 fi
 if command -v curl >/dev/null 2>&1; then
   if smartdocs_health; then
-    ok "SmartDocs health: responding on http://${SMARTDOCS_LOCAL_HOST}:${SMARTDOCS_PORT}/"
+    if [ "$WEB_PORT_UP" -eq 1 ]; then
+      ok "SmartDocs health: responding on http://${SMARTDOCS_LOCAL_HOST}:${SMARTDOCS_PORT}/"
+    else
+      # Contradiction: the port probe said free, yet HTTP just got a response
+      # (server started between the two probes, or an IPv6-only listener).
+      warn "Web port $SMARTDOCS_PORT was FREE a moment ago but HTTP now responds on"
+      warn "http://${SMARTDOCS_LOCAL_HOST}:${SMARTDOCS_PORT}/ — likely it just started. Re-run scripts/check.sh."
+    fi
   else
     info "SmartDocs health: not responding (start it with scripts/start_web.sh)"
   fi

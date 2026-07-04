@@ -17,9 +17,18 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full technical architec
 
 ## Quick Start
 
-**Prerequisites:** Python **3.10** (verified) and `git`. **Node/npm are *not* required** —
+**Prerequisites:** Python **3.10** and `git`. **Node/npm are *not* required** —
 the frontend is plain vendored JavaScript with no build step. macOS, Ubuntu/Linux, and
 Windows are supported (see [docs/INSTALLATION.md](docs/INSTALLATION.md) for per-OS details).
+
+> **Python 3.10 is REQUIRED for the main venv** (3.11 tolerated, unverified).
+> **3.12/3.13/3.14 do not work**: `paddlepaddle>=3.0.0` and `Pillow==10.2.0`
+> (pinned by VietOCR) publish no wheels there, so `pip install -r requirements.txt`
+> fails. `scripts/setup.sh` auto-picks `python3.10` and refuses newer interpreters
+> (recreate a bad venv with `scripts/setup.sh --reset-venv`). macOS:
+> `brew install python@3.10`. This applies only to the **main** venv — the GLM
+> venvs (`GLM-OCR/.venv-mlx` / `.venv-sdk`) are separate and may use Python
+> 3.10–3.12 (see `scripts/setup_glm.sh`).
 
 ### Fastest start — the `scripts/` launchers (recommended)
 
@@ -108,8 +117,8 @@ Desktop-app packaging plan: **[docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md)**.
 # 1. Get the code and enter the project
 cd SmartDocs-Agent
 
-# 2. Create and activate a virtual environment
-python3 -m venv .venv
+# 2. Create and activate a virtual environment — MUST be Python 3.10
+python3.10 -m venv .venv           # macOS: brew install python@3.10 first
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
 # 3. Install dependencies (~several GB incl. torch + paddle)

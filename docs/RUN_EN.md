@@ -17,6 +17,14 @@ paths automatically — **you never have to activate a venv or `cd` anywhere.**
 The complete from-zero sequence — clone to running app. Run each step online
 once; afterwards the app works fully offline.
 
+**Prerequisite — Python 3.10.** The main venv REQUIRES Python 3.10
+(3.12/3.13/3.14 cannot install `paddlepaddle`/`Pillow 10.2.0`; `setup.sh`
+rejects them instead of creating a broken venv):
+
+```bash
+brew install python@3.10
+```
+
 ```bash
 git clone <repo-url> SmartDocs-Agent
 cd SmartDocs-Agent
@@ -65,9 +73,23 @@ This:
 
 - finds an existing virtualenv (`./.venv`, or the parent `../.venv`), or creates
   `./.venv` if none exists — it never clobbers a working venv;
-- installs `requirements.txt` into it;
+- **enforces Python 3.10 for the main venv** (3.11 tolerated with a warning).
+  New venvs are created from `python3.10` → `/opt/homebrew/bin/python3.10` →
+  `/usr/local/bin/python3.10` → `python3.11`; it never silently falls back to a
+  newer `python3` (3.12–3.14 can't install `paddlepaddle`/`Pillow 10.2.0`). If
+  no supported Python exists it stops with `brew install python@3.10` — no
+  broken venv is created. An existing `./.venv` on an unsupported Python is
+  recreated with `scripts/setup.sh --reset-venv` (a venv outside the repo is
+  never auto-deleted — remove it yourself);
+- installs `requirements.txt` into it — **fail-fast**: if pip fails, setup stops
+  immediately and later steps must not be run;
+- verifies the core imports (flask, PIL, yaml, torch, transformers, vietocr,
+  argostranslate, sentence_transformers) before declaring "Setup complete";
 - creates `.env` from `.env.example` if you don't have one yet;
 - creates the runtime folders `logs/`, `uploads/`, `artifacts/`.
+
+> The GLM venvs are separate: `scripts/setup_glm.sh` accepts Python 3.10–3.12
+> for `GLM-OCR/.venv-mlx` / `.venv-sdk`. Do **not** use Python 3.14 anywhere.
 
 ## 2. Check the environment
 
@@ -228,6 +250,12 @@ Run OCR.
 
 ## Troubleshooting
 
+- **`UNSUPPORTED Python …` / `No matching distribution found for paddlepaddle`** —
+  the venv was created with Python 3.12/3.13/3.14. Install 3.10
+  (`brew install python@3.10`) and recreate: `scripts/setup.sh --reset-venv`.
+- **`Main venv is incomplete (missing imports: …)`** — `pip install` didn't
+  finish (or ran on the wrong Python). Re-run `scripts/setup.sh` with Python
+  3.10 and make sure it ends with "Setup complete".
 - **`Flask is not installed`** — run `scripts/setup.sh`.
 - **`Port 5002 already in use`** — SmartDocs is already running; `scripts/stop.sh`,
   or set a different `SMARTDOCS_PORT`.

@@ -38,16 +38,43 @@ info "SmartDocs-Agent — OFFLINE readiness check"
 hr
 info "Repo root : $REPO_ROOT"
 
-# --- Main Python + Pillow + VietOCR import ----------------------------------
+# --- Environment gate: three DISTINCT failure classes -----------------------
+# 1. unsupported Python version  -> recreate the venv (scripts/setup.sh --reset-venv)
+# 2. incomplete venv             -> re-run scripts/setup.sh (pip install)
+# 3. missing offline MODELS      -> the matrix below (scripts/setup_offline.sh)
+# Classes 1/2 stop here: every model row would otherwise be a misleading ❌.
 if PY="$(resolve_python)"; then
-  PYVER="$("$PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
+  PYVER="$(python_version_of "$PY")"
   ok "Main SmartDocs Python: $PY (v$PYVER)"
 else
   err "No Python interpreter found. Run scripts/setup.sh."
   exit 1
 fi
-if ! "$PY" -c 'import flask' >/dev/null 2>&1; then
-  err "Flask not importable — run scripts/setup.sh to install requirements.txt"
+SUP=0; main_python_support "$PYVER" || SUP=$?
+if [ "$SUP" -ge 2 ]; then
+  err "UNSUPPORTED Python $PYVER for the main venv (required: 3.10; tolerated: 3.11)."
+  err "This is an ENVIRONMENT problem, not a missing-model problem — the model"
+  err "checks below would all fail misleadingly, so they are skipped."
+  err "Fix:  scripts/setup.sh --reset-venv   then re-run this script."
+  exit 1
+elif [ "$SUP" -eq 1 ]; then
+  warn "Python $PYVER is tolerated but not fully verified — 3.10 is the verified version."
+fi
+CORE_MISSING="$("$PY" -c '
+import importlib
+mods = ["flask", "PIL", "yaml", "torch", "transformers"]
+missing = []
+for m in mods:
+    try:
+        importlib.import_module(m)
+    except Exception:
+        missing.append(m)
+print(" ".join(missing))
+' 2>/dev/null || echo 'interpreter-failed')"
+if [ -n "$CORE_MISSING" ]; then
+  err "Main venv is INCOMPLETE (missing imports: $CORE_MISSING)."
+  err "This is an install problem, not a missing-model problem — re-run"
+  err "scripts/setup.sh with Python 3.10, then re-run this script."
   exit 1
 fi
 MAIN_PIL="$("$PY" -c 'import PIL; print(PIL.__version__)' 2>/dev/null || echo 'not installed')"
@@ -55,7 +82,7 @@ ok "Main Pillow version  : $MAIN_PIL"
 if "$PY" -c 'import vietocr' >/dev/null 2>&1; then
   ok "VietOCR import       : OK"
 else
-  warn "VietOCR import       : not available (run scripts/setup.sh)"
+  warn "VietOCR import       : not available — venv incomplete (run scripts/setup.sh)"
 fi
 
 # --- Model readiness matrix (single source of truth: config.py) -------------

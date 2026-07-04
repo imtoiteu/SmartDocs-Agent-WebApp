@@ -104,6 +104,56 @@ normalize_env() {
   export ENABLE_GLM
 }
 
+# --- Main-venv Python version policy ----------------------------------------
+# The main SmartDocs dependency stack is VERIFIED on Python 3.10 ONLY.
+# paddlepaddle>=3.0.0 and Pillow==10.2.0 (pinned by VietOCR) publish NO wheels
+# for Python 3.13/3.14, so a 3.14 venv fails `pip install -r requirements.txt`
+# immediately ("No matching distribution found for paddlepaddle>=3.0.0").
+# 3.11 is tolerated with a warning (wheels exist, stack not fully verified).
+# 3.12/3.13/3.14 are REJECTED for the main venv. GLM's OWN venvs
+# (GLM-OCR/.venv-mlx / .venv-sdk) have a separate policy in setup_glm.sh.
+
+# Print "3.10.14"-style version of an interpreter (or "?" if it won't run).
+python_version_of() {
+  "$1" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?'
+}
+
+# main_python_support <version> -> 0 verified (3.10) | 1 tolerated (3.11) | 2 unsupported
+main_python_support() {
+  case "$1" in
+    3.10.*) return 0 ;;
+    3.11.*) return 1 ;;
+    *)      return 2 ;;
+  esac
+}
+
+# Locate an interpreter SUPPORTED for the main venv, in preference order.
+# Never silently falls back to a newer python (that is exactly the clean-clone
+# bug where `python3` was 3.14). Prints the path or returns non-zero.
+find_supported_main_python() {
+  local c ver
+  for c in \
+      python3.10 \
+      /opt/homebrew/bin/python3.10 \
+      /usr/local/bin/python3.10 \
+      /usr/bin/python3.10 \
+      python3.11 \
+      python3; do
+    case "$c" in
+      /*) [ -x "$c" ] || continue ;;
+      *)  c="$(command -v "$c" 2>/dev/null)" || continue ;;
+    esac
+    ver="$(python_version_of "$c")"
+    local sup=0
+    main_python_support "$ver" || sup=$?
+    if [ "$sup" -le 1 ]; then   # 0 = verified 3.10, 1 = tolerated 3.11
+      printf '%s\n' "$c"; return 0
+    fi
+    # unsupported (e.g. python3 -> 3.14): keep looking, NEVER fall back to it
+  done
+  return 1
+}
+
 # --- Python / venv resolution ----------------------------------------------
 # Print the venv python if one exists, in priority order. Returns non-zero when
 # no virtualenv is found (callers may then fall back to system python3).
@@ -169,9 +219,18 @@ port_in_use() {
 }
 
 # Echo the HTTP status code for a GET (or "000" if unreachable). Needs curl.
+# NOTE: on connection failure curl BOTH prints "000" (from -w) AND exits
+# non-zero — a naive `|| echo 000` would emit "000000", which callers then
+# misread as "responding" (that made check.sh report SmartDocs health as
+# responding while the port was free). Normalise to exactly three digits.
 http_status() {
   local url="$1"; shift || true
-  curl -s -o /dev/null -m "${HEALTH_TIMEOUT:-5}" -w "%{http_code}" "$@" "$url" 2>/dev/null || echo "000"
+  local code
+  code="$(curl -s -o /dev/null -m "${HEALTH_TIMEOUT:-5}" -w "%{http_code}" "$@" "$url" 2>/dev/null)" || true
+  case "$code" in
+    [0-9][0-9][0-9]) printf '%s\n' "$code" ;;
+    *)               echo "000" ;;
+  esac
 }
 
 # GLM health probe — mirrors RUN_CONTEXT_FOR_CLAUDE.md. Returns 0 iff HTTP 200.
@@ -186,9 +245,12 @@ glm_health() {
 }
 
 # SmartDocs health — any HTTP response (200/302/401/403…) means the server is up.
+# --noproxy '*': this probes the LOCAL server directly; an http_proxy env var
+# must not answer on its behalf (that made check.sh report "responding" while
+# the port was actually free).
 smartdocs_health() {
   local code
-  code="$(http_status "http://${SMARTDOCS_LOCAL_HOST}:${SMARTDOCS_PORT}/")"
+  code="$(http_status "http://${SMARTDOCS_LOCAL_HOST}:${SMARTDOCS_PORT}/" --noproxy '*')"
   case "$code" in 000|"") return 1 ;; *) return 0 ;; esac
 }
 

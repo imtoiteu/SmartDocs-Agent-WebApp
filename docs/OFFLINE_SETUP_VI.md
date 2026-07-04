@@ -104,6 +104,17 @@ layout GLM là ngoại lệ, được kiểm tra trong cache mặc định `~/.c
 
 ## Khắc phục sự cố
 
+- **`UNSUPPORTED Python …` / `Main venv is incomplete (missing imports: …)`** —
+  `setup_offline.sh` giờ từ chối tải mô hình khi môi trường hỏng. Venv chính
+  BẮT BUỘC **Python 3.10** (3.11 chấp nhận); 3.12–3.14 hoàn toàn không cài được
+  `paddlepaddle`/`Pillow 10.2.0`. Sửa venv trước:
+  ```bash
+  brew install python@3.10          # macOS, nếu chưa có 3.10
+  scripts/setup.sh --reset-venv     # tạo lại ./.venv bằng Python hỗ trợ
+  scripts/setup_offline.sh          # rồi mới tải mô hình
+  ```
+  Đây là lỗi **môi trường**, không phải lỗi thiếu mô hình — các dòng báo lỗi
+  từng mô hình vô nghĩa cho tới khi venv hoàn chỉnh.
 - **Cài đặt in ra `No module named 'vietocr' / 'PIL' / 'argostranslate' / 'sentence_transformers'`** —
   bạn đã chạy tool bằng Python sai (hệ thống). Hãy dùng wrapper:
   ```bash

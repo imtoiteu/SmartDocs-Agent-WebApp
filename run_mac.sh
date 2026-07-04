@@ -21,8 +21,9 @@ elif [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
     source "$SCRIPT_DIR/.venv/bin/activate"
 else
     echo "  ⚠️  No virtual environment found at $VENV_DIR"
-    echo "      Create one with: python3 -m venv .venv && source .venv/bin/activate"
-    echo "      Then install: pip install -r requirements.txt"
+    echo "      Create one with Python 3.10 (REQUIRED — 3.12/3.13/3.14 cannot install paddlepaddle):"
+    echo "      python3.10 -m venv .venv && source .venv/bin/activate    # brew install python@3.10"
+    echo "      Then install: pip install -r requirements.txt   (or just run scripts/setup.sh)"
     exit 1
 fi
 

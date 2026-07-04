@@ -63,17 +63,32 @@ def _expected_venv_dirs():
     return [d for d in dirs if d.is_dir()]
 
 
-_IMPORT_CHECKS = {
-    "PIL":                   _import_ok("PIL"),
-    "vietocr":               _import_ok("vietocr"),
-    "argostranslate":        _import_ok("argostranslate"),
-    "sentence_transformers": _import_ok("sentence_transformers"),
-}
+# The full runtime stack this setup needs BEFORE it downloads anything.
+# All of these are provided by requirements.txt in the main venv.
+_REQUIRED_IMPORTS = (
+    "flask", "PIL", "yaml", "torch", "transformers",
+    "vietocr", "argostranslate", "sentence_transformers",
+)
+_IMPORT_CHECKS = {mod: _import_ok(mod) for mod in _REQUIRED_IMPORTS}
 
 print(f"\n  Python     : {sys.executable}")
 print(f"  Version    : {platform.python_version()}")
 for _mod, _okflag in _IMPORT_CHECKS.items():
     print(f"  import {_mod:<22}: {'OK' if _okflag else '❌ MISSING'}")
+
+# HARD GATE 1 — Python version. paddlepaddle>=3.0.0 / Pillow==10.2.0 publish no
+# wheels for 3.12+, so requirements.txt cannot even install there: every later
+# step would fail with misleading per-model errors. Verified: 3.10 (3.11 tolerated).
+if not (sys.version_info[:2] == (3, 10) or sys.version_info[:2] == (3, 11)):
+    print()
+    print("  ❌ UNSUPPORTED Python %s for the main SmartDocs venv." % platform.python_version())
+    print("     Required: Python 3.10 (3.11 tolerated). 3.12/3.13/3.14 cannot")
+    print("     install the dependency stack (paddlepaddle, Pillow 10.2.0).")
+    print("     Recreate the venv:  scripts/setup.sh --reset-venv")
+    print("     Then run:           scripts/setup_offline.sh")
+    sys.exit(2)
+if sys.version_info[:2] == (3, 11):
+    print("  ⚠️  Python 3.11 is tolerated but not fully verified — 3.10 is the verified version.")
 
 # In a venv, sys.prefix IS the venv directory (don't compare executables —
 # venv pythons are symlinks, so realpath collapses to the base interpreter).
@@ -81,16 +96,24 @@ _expected = _expected_venv_dirs()
 _in_expected_venv = any(
     Path(sys.prefix).resolve() == d.resolve() for d in _expected
 )
-if (_expected and not _in_expected_venv) or not (_IMPORT_CHECKS["PIL"] and _IMPORT_CHECKS["vietocr"]):
+if _expected and not _in_expected_venv:
     print()
     print("  " + "!" * 56)
     print("  ⚠️  You may be using the wrong Python. Use scripts/setup_offline.sh.")
     print("     It resolves the main SmartDocs venv automatically (same one")
-    print("     scripts/check.sh uses). All four imports above are provided by")
-    print("     requirements.txt in that venv.")
-    if _expected:
-        print(f"     Expected venv: {_expected[0]}")
+    print("     scripts/check.sh uses).")
+    print(f"     Expected venv: {_expected[0]}")
     print("  " + "!" * 56)
+
+# HARD GATE 2 — required imports. Downloading models into an incomplete venv
+# only produces a cascade of per-model 'No module named …' failures.
+_missing = [m for m, okflag in _IMPORT_CHECKS.items() if not okflag]
+if _missing:
+    print()
+    print("  ❌ Main venv is incomplete (missing: %s)." % ", ".join(_missing))
+    print("     Re-run scripts/setup.sh with Python 3.10, then scripts/setup_offline.sh.")
+    print("     No models were downloaded.")
+    sys.exit(2)
 
 # ── Load config (sets HF env vars) ────────────────────────────────────────────
 from config import cfg

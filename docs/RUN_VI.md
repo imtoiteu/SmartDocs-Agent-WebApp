@@ -17,6 +17,14 @@ trong `scripts/`. Các script tự động tìm virtualenv Python và đường 
 Chuỗi lệnh đầy đủ từ số 0 — clone đến chạy app. Chạy một lần khi có mạng;
 sau đó app hoạt động hoàn toàn offline.
 
+**Yêu cầu trước — Python 3.10.** Venv chính BẮT BUỘC dùng Python 3.10
+(3.12/3.13/3.14 không cài được `paddlepaddle`/`Pillow 10.2.0`; `setup.sh` sẽ
+từ chối thay vì tạo venv hỏng):
+
+```bash
+brew install python@3.10
+```
+
 ```bash
 git clone <repo-url> SmartDocs-Agent
 cd SmartDocs-Agent
@@ -65,9 +73,23 @@ Script này sẽ:
 
 - tìm virtualenv có sẵn (`./.venv` hoặc `../.venv` ở thư mục cha), hoặc tạo mới
   `./.venv` nếu chưa có — không bao giờ ghi đè venv đang dùng được;
-- cài `requirements.txt` vào venv đó;
+- **bắt buộc Python 3.10 cho venv chính** (3.11 chấp nhận kèm cảnh báo). Venv
+  mới được tạo từ `python3.10` → `/opt/homebrew/bin/python3.10` →
+  `/usr/local/bin/python3.10` → `python3.11`; không bao giờ âm thầm rơi về
+  `python3` mới hơn (3.12–3.14 không cài được `paddlepaddle`/`Pillow 10.2.0`).
+  Không có Python phù hợp thì script dừng với hướng dẫn
+  `brew install python@3.10` — không tạo venv hỏng. Nếu `./.venv` có sẵn nhưng
+  dùng Python không hỗ trợ, tạo lại bằng `scripts/setup.sh --reset-venv`
+  (venv nằm ngoài repo thì không bao giờ tự xoá — bạn tự xoá);
+- cài `requirements.txt` — **fail-fast**: pip lỗi là dừng ngay, không được chạy
+  các bước sau;
+- kiểm tra các import cốt lõi (flask, PIL, yaml, torch, transformers, vietocr,
+  argostranslate, sentence_transformers) trước khi báo "Setup complete";
 - tạo `.env` từ `.env.example` nếu bạn chưa có;
 - tạo các thư mục runtime `logs/`, `uploads/`, `artifacts/`.
+
+> Venv GLM là riêng biệt: `scripts/setup_glm.sh` chấp nhận Python 3.10–3.12 cho
+> `GLM-OCR/.venv-mlx` / `.venv-sdk`. **Không** dùng Python 3.14 ở bất cứ đâu.
 
 ## 2. Kiểm tra môi trường
 
@@ -230,6 +252,12 @@ Run OCR.
 
 ## Xử lý sự cố
 
+- **`UNSUPPORTED Python …` / `No matching distribution found for paddlepaddle`** —
+  venv được tạo bằng Python 3.12/3.13/3.14. Cài 3.10
+  (`brew install python@3.10`) rồi tạo lại: `scripts/setup.sh --reset-venv`.
+- **`Main venv is incomplete (missing imports: …)`** — `pip install` chưa hoàn
+  tất (hoặc chạy nhầm Python). Chạy lại `scripts/setup.sh` với Python 3.10 và
+  đảm bảo kết thúc bằng "Setup complete".
 - **`Flask is not installed`** — chạy `scripts/setup.sh`.
 - **`Port 5002 already in use`** — SmartDocs đang chạy rồi; dùng `scripts/stop.sh`
   hoặc đặt `SMARTDOCS_PORT` khác.

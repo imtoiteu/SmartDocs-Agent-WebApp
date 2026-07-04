@@ -31,6 +31,38 @@ if ! PY="$(venv_python)"; then
   exit 1
 fi
 
-ok "Using main venv Python: $PY"
+PYVER="$(python_version_of "$PY")"
+SUP=0; main_python_support "$PYVER" || SUP=$?
+if [ "$SUP" -ge 2 ]; then
+  err "Main venv uses UNSUPPORTED Python $PYVER ($PY)."
+  err "The dependency stack (paddlepaddle, Pillow 10.2.0) requires Python 3.10."
+  err "Recreate the venv first:  scripts/setup.sh --reset-venv"
+  exit 1
+fi
+[ "$SUP" -eq 1 ] && warn "Python $PYVER is tolerated but not fully verified — 3.10 is the verified version."
+ok "Using main venv Python: $PY (v$PYVER)"
+
+# Required-imports gate: downloading models is pointless (and produces a wall of
+# misleading per-model errors) if the venv itself is incomplete.
+MISSING="$("$PY" -c '
+import importlib
+mods = ["flask", "PIL", "yaml", "torch", "transformers", "vietocr",
+        "argostranslate", "sentence_transformers"]
+missing = []
+for m in mods:
+    try:
+        importlib.import_module(m)
+    except Exception:
+        missing.append(m)
+print(" ".join(missing))
+' 2>/dev/null || echo 'interpreter-failed')"
+if [ -n "$MISSING" ]; then
+  err "Main venv is incomplete (missing imports: $MISSING)."
+  err "Re-run scripts/setup.sh with Python 3.10 — then re-run this script."
+  err "No models were downloaded."
+  exit 1
+fi
+ok "Main venv imports verified (flask, PIL, yaml, torch, transformers, vietocr, argostranslate, sentence_transformers)"
+
 cd "$REPO_ROOT"
 exec "$PY" "$REPO_ROOT/tools/setup_offline.py" "$@"
