@@ -410,6 +410,26 @@ def _store_standard_result(path: Path, page: int, engine_name: str, result: dict
     _STANDARD_OCR_CACHE[key] = copy.deepcopy(result)
 
 
+def _ocr_error_response(effective_engine, exc, selected_engine=None):
+    """Turn an OCR engine exception into the standard JSON failure shape the SPA
+    understands (it checks ``data.success``). Returned via ``jsonify`` with an
+    HTTP 200 so the frontend parses JSON and shows the real message instead of
+    choking on a Flask HTML 500 page (the "Unexpected token '<'" symptom).
+
+    Engines that already return a structured ``{success: False}`` (e.g. GLM) never
+    reach here; this is the safety net for engines that raise (e.g. VietOCR when
+    its local config/weights are missing)."""
+    msg = str(exc).strip() or exc.__class__.__name__
+    return {
+        "success": False,
+        "error": f"{effective_engine} OCR failed: {msg}",
+        "results": [],
+        "ocr_engine": effective_engine,
+        "selected_engine": selected_engine or effective_engine,
+        "inference_status": "error",
+    }
+
+
 def _run_page_ocr(path: Path, page: int, apply_ai: bool, image_path_for_ocr: str, engine_name: str):
     if not apply_ai:
         standard_result = smart_ocr_service.run_ocr_pipeline(
@@ -468,6 +488,9 @@ def ocr_page():
             pil.save(t.name, format="PNG"); tmp = t.name
         try:
             res = _run_page_ocr(path, page, apply_ai, tmp, effective_engine)
+        except Exception as e:
+            app.logger.exception("OCR failed (pdf) engine=%s", effective_engine)
+            return jsonify(_ocr_error_response(effective_engine, e, selected_engine))
         finally:
             try: os.unlink(tmp)
             except: pass
@@ -488,7 +511,11 @@ def ocr_page():
                 "results": [],
                 "preview_only": True
             })
-        res = _run_page_ocr(path, page, apply_ai, str(path), effective_engine)
+        try:
+            res = _run_page_ocr(path, page, apply_ai, str(path), effective_engine)
+        except Exception as e:
+            app.logger.exception("OCR failed (image) engine=%s", effective_engine)
+            return jsonify(_ocr_error_response(effective_engine, e, selected_engine))
         res["page_image_b64"] = ocr_service.pil_to_b64(pil, "JPEG" if suffix in {".jpg",".jpeg"} else "PNG")
     res["selected_engine"] = selected_engine
     res["ocr_engine"] = res.get("ocr_engine", effective_engine)
@@ -593,6 +620,9 @@ def ocr_all():
                 pil.save(t.name, format="PNG"); tmp = t.name
             try:
                 res = _run_page_ocr(path, p, apply_ai, tmp, effective_engine)
+            except Exception as e:
+                app.logger.exception("OCR-All failed (pdf page %s) engine=%s", p, effective_engine)
+                return jsonify(_ocr_error_response(effective_engine, e, selected_engine))
             finally:
                 try: os.unlink(tmp)
                 except: pass
@@ -608,7 +638,11 @@ def ocr_all():
     else:
         from PIL import Image
         pil = Image.open(str(path))
-        res = _run_page_ocr(path, 1, apply_ai, str(path), effective_engine)
+        try:
+            res = _run_page_ocr(path, 1, apply_ai, str(path), effective_engine)
+        except Exception as e:
+            app.logger.exception("OCR-All failed (image) engine=%s", effective_engine)
+            return jsonify(_ocr_error_response(effective_engine, e, selected_engine))
         res["page_image_b64"] = ocr_service.pil_to_b64(pil, "PNG")
         res["selected_engine"] = selected_engine
         res["ocr_engine"] = res.get("ocr_engine", effective_engine)

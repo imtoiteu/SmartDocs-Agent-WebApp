@@ -33,6 +33,32 @@ Reports Python + venv, key dependencies, the state of the web and GLM ports, and
 live health for both SmartDocs and (optionally) the GLM server. It changes
 nothing and never fails just because GLM is down.
 
+For **AI model / offline readiness** (chat, AI rewrite, VietOCR config+weights,
+Argos, GLM layout) run the companion diagnostic:
+
+```bash
+scripts/check_offline.sh
+```
+
+It prints, per feature, whether it is usable now, needs a one-time online setup,
+or is running on a built-in fallback.
+
+## 2b. Offline AI models (one-time, needs internet)
+
+With `OFFLINE=1` (the default) AI models load only from local caches. The web
+app, login, upload, document management and basic correction work immediately,
+but **chat, AI rewrite, VietOCR, offline translation and GLM OCR** must be primed
+once while online. Run this **inside the main venv**:
+
+```bash
+.venv/bin/python tools/setup_offline.py     # or ../.venv/bin/python tools/setup_offline.py
+```
+
+This caches: the Qwen chat models (primary 3B + fallback 1.5B), the Qwen rewrite
+model (1.5B), PhoBERT, the RAG embedding model, the PaddleOCR models, the VietOCR
+weights **and** `models/vietocr/config.yml`, and the Argos translation packages.
+Full guide: **[OFFLINE_SETUP_EN.md](OFFLINE_SETUP_EN.md)**.
+
 ## 3. Start
 
 ### Full stack (recommended)
@@ -106,14 +132,23 @@ telling you to start the GLM server — nothing crashes.
 **With GLM** (Apple Silicon only) — clean-clone setup, no external paths:
 
 ```bash
-scripts/setup.sh             # main SmartDocs venv (keeps Pillow 10.2.0 for VietOCR)
-scripts/setup_glm.sh         # creates BOTH GLM venvs (Py 3.10–3.12) + mlx_config.yaml:
-                             #   .venv-mlx  (MLX server, from glm-mlx-lock.txt)
-                             #   .venv-sdk  (glmocr CLI + torch, from glm-sdk-lock.txt)
-scripts/check.sh             # expect ".venv-mlx imports: OK" and ".venv-sdk imports: OK"
-scripts/start_glm.sh -b      # start the model server (first run loads the model)
-scripts/start.sh             # full stack; then expect "GLM health: 200"
+scripts/setup.sh                        # main SmartDocs venv (keeps Pillow 10.2.0 for VietOCR)
+scripts/setup_glm.sh --precache-layout  # creates BOTH GLM venvs (Py 3.10–3.12) + mlx_config.yaml
+                                        #   .venv-mlx  (MLX server, from glm-mlx-lock.txt)
+                                        #   .venv-sdk  (glmocr CLI + torch, from glm-sdk-lock.txt)
+                                        # writes pipeline.layout.model_dir and caches PP-DocLayoutV3
+scripts/check.sh                        # expect ".venv-mlx imports: OK" and ".venv-sdk imports: OK"
+scripts/check_offline.sh                # expect "GLM layout config: OK" + layout model cached
+scripts/start_glm.sh -b                 # start the model server (first run loads the model)
+scripts/start.sh                        # full stack; then expect "GLM health: 200"
 ```
+
+`glmocr` self-hosted mode **requires** `pipeline.layout.model_dir`. `setup_glm.sh`
+writes it into `mlx_config.yaml` (default `PaddlePaddle/PP-DocLayoutV3_safetensors`,
+override with `GLM_LAYOUT_MODEL_DIR`). `--precache-layout` downloads that checkpoint
+into the **default** HF cache — where `glm_adapter.py` looks — so it works offline.
+Without it, GLM OCR fails with *"pipeline.layout.model_dir is required for
+self-hosted layout detection"*.
 
 **Why three separate Python environments.** The SmartDocs UI does **not** import
 GLM-OCR in-process. `services/ocr_engines/glm_adapter.py` runs `glmocr.cli` as a

@@ -45,7 +45,8 @@ class VietOCREngine(OCREngine):
             if not config_path.exists():
                 raise RuntimeError(
                     f"VietOCR config missing at {config_path}. "
-                    "Please ensure models/vietocr/config.yml exists."
+                    "Run 'python tools/setup_offline.py' (online, once) to download the "
+                    "weights and generate this config, or set VIETOCR_CONFIG/VIETOCR_WEIGHTS."
                 )
             
             config = Cfg.load_config_from_file(str(config_path))

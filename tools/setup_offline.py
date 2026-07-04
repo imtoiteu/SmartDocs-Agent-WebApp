@@ -50,25 +50,32 @@ errors = []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  1. Qwen (AI Rewrite model)
+#  1. Qwen LLMs — AI Rewrite (QWEN_MODEL) + AI Chat primary/fallback
+#     (CHAT_MODEL / FALLBACK_CHAT_MODEL). These are DISTINCT models: Chat defaults
+#     to Qwen2.5-3B while Rewrite defaults to 1.5B. Caching only one leaves the
+#     other feature broken offline, so we download the full deduped set here.
 # ══════════════════════════════════════════════════════════════════════════════
-print(f"\n[1/5] Qwen — {cfg.QWEN_MODEL}")
+_qwen_models = []
+for _m in (cfg.QWEN_MODEL, cfg.CHAT_MODEL, cfg.FALLBACK_CHAT_MODEL):
+    if _m and _m not in _qwen_models:
+        _qwen_models.append(_m)
+print(f"\n[1/5] Qwen LLMs — {', '.join(_qwen_models)}")
 try:
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
 
-    print("  Downloading tokenizer…")
-    AutoTokenizer.from_pretrained(cfg.QWEN_MODEL)
-
-    print("  Downloading model weights (~3 GB, please wait)…")
-    AutoModelForCausalLM.from_pretrained(cfg.QWEN_MODEL, torch_dtype=torch.float32)
-
-    print("  ✅ Qwen ready")
+    for _m in _qwen_models:
+        try:
+            print(f"  ↓ {_m} — tokenizer…")
+            AutoTokenizer.from_pretrained(_m)
+            print(f"  ↓ {_m} — weights (1.5B≈3 GB / 3B≈6 GB, please wait)…")
+            AutoModelForCausalLM.from_pretrained(_m, torch_dtype=torch.float32)
+            print(f"  ✅ {_m} ready")
+        except Exception as e:
+            print(f"  ❌ {_m} failed: {e}")
+            errors.append(f"Qwen {_m}: {e}")
 except ImportError as e:
     print(f"  ⚠️  Skipped (missing library): {e}")
-except Exception as e:
-    print(f"  ❌ Failed: {e}")
-    errors.append(f"Qwen: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -159,7 +166,50 @@ try:
     else:
         print(f"  Downloading {weight_path.name} (~160 MB)…")
         urllib.request.urlretrieve(url, str(weight_path))
-    
+
+    # ── Generate models/vietocr/config.yml (OFFLINE) ──────────────────────────
+    # The adapter (services/ocr_engines/vietocr_adapter.py) loads a LOCAL
+    # config.yml on purpose — vietocr's Cfg.load_config_from_name() may hit the
+    # network. We build it here from the yaml files BUNDLED inside the installed
+    # vietocr package (no internet), merging base.yml + the architecture yaml.
+    config_yml = vietocr_dir / "config.yml"
+    if config_yml.exists():
+        print(f"  ✓ {config_yml.name} already present")
+    else:
+        try:
+            import yaml, vietocr
+            pkg_cfg = Path(vietocr.__file__).parent / "config"
+            arch = cfg.VIETOCR_CONFIG                       # e.g. "vgg_transformer"
+            base_f = pkg_cfg / "base.yml"
+            # vietocr ships the arch file with a hyphen: vgg-transformer.yml
+            arch_f = pkg_cfg / f"{arch.replace('_', '-')}.yml"
+            if not arch_f.exists():
+                arch_f = pkg_cfg / f"{arch}.yml"
+            if base_f.exists() and arch_f.exists():
+                merged = yaml.safe_load(base_f.read_text(encoding="utf-8")) or {}
+                over = yaml.safe_load(arch_f.read_text(encoding="utf-8")) or {}
+                # shallow-merge, then one level deep for nested dicts (cnn/transformer/…)
+                for k, v in over.items():
+                    if isinstance(v, dict) and isinstance(merged.get(k), dict):
+                        merged[k].update(v)
+                    else:
+                        merged[k] = v
+                # Offline, local-weights defaults (the adapter re-asserts these too)
+                merged.setdefault("cnn", {})["pretrained"] = False
+                merged["weights"] = str(weight_path)
+                merged["device"] = cfg.VIETOCR_DEVICE
+                merged.setdefault("predictor", {})["beamsearch"] = False
+                config_yml.write_text(yaml.safe_dump(merged, allow_unicode=True, sort_keys=False),
+                                      encoding="utf-8")
+                print(f"  ✅ Wrote {config_yml} (from bundled {arch_f.name})")
+            else:
+                print(f"  ⚠️  Could not find bundled vietocr configs in {pkg_cfg} — "
+                      f"config.yml NOT generated. VietOCR OCR will be unavailable.")
+                errors.append("VietOCR: bundled package configs not found; config.yml missing")
+        except Exception as e:
+            print(f"  ⚠️  Could not generate config.yml: {e}")
+            errors.append(f"VietOCR config.yml: {e}")
+
     print("  ✅ VietOCR ready")
 except Exception as e:
     print(f"  ❌ Failed: {e}")

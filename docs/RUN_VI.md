@@ -33,6 +33,32 @@ Báo cáo Python + venv, các thư viện quan trọng, trạng thái cổng web
 tình trạng "sức khoẻ" của SmartDocs cùng (tuỳ chọn) máy chủ GLM. Script này
 không thay đổi gì và không báo lỗi chỉ vì GLM đang tắt.
 
+Để kiểm tra **mức sẵn sàng mô hình AI / offline** (chat, viết lại, config+weights
+VietOCR, Argos, layout GLM), chạy công cụ chẩn đoán đi kèm:
+
+```bash
+scripts/check_offline.sh
+```
+
+Nó in ra, theo từng tính năng: dùng được ngay, cần cài online một lần, hay đang
+chạy bằng fallback tích hợp.
+
+## 2b. Mô hình AI offline (một lần, cần mạng)
+
+Với `OFFLINE=1` (mặc định), mô hình AI chỉ nạp từ cache cục bộ. Ứng dụng web,
+đăng nhập, tải lên, quản lý tài liệu và sửa lỗi cơ bản chạy được ngay, nhưng
+**chat, viết lại AI, VietOCR, dịch offline và GLM OCR** cần được chuẩn bị một lần
+khi có mạng. Chạy **trong venv chính**:
+
+```bash
+.venv/bin/python tools/setup_offline.py     # hoặc ../.venv/bin/python tools/setup_offline.py
+```
+
+Lệnh này cache: các mô hình chat Qwen (chính 3B + dự phòng 1.5B), mô hình viết lại
+Qwen (1.5B), PhoBERT, mô hình embedding RAG, mô hình PaddleOCR, weights VietOCR
+**và** `models/vietocr/config.yml`, cùng các gói dịch Argos.
+Hướng dẫn đầy đủ: **[OFFLINE_SETUP_VI.md](OFFLINE_SETUP_VI.md)**.
+
 ## 3. Khởi động
 
 ### Toàn bộ hệ thống (khuyến nghị)
@@ -107,14 +133,23 @@ yêu cầu bật máy chủ GLM — không có gì bị sập.
 **Có GLM** (chỉ Apple Silicon) — cài đặt kiểu clean-clone, không dùng đường dẫn ngoài:
 
 ```bash
-scripts/setup.sh             # venv SmartDocs chính (giữ Pillow 10.2.0 cho VietOCR)
-scripts/setup_glm.sh         # tạo CẢ HAI venv GLM (Py 3.10–3.12) + mlx_config.yaml:
-                             #   .venv-mlx  (máy chủ MLX, từ glm-mlx-lock.txt)
-                             #   .venv-sdk  (glmocr CLI + torch, từ glm-sdk-lock.txt)
-scripts/check.sh             # kỳ vọng ".venv-mlx imports: OK" và ".venv-sdk imports: OK"
-scripts/start_glm.sh -b      # bật máy chủ mô hình (lần đầu sẽ nạp mô hình)
-scripts/start.sh             # bật cả stack; sau đó kỳ vọng "GLM health: 200"
+scripts/setup.sh                        # venv SmartDocs chính (giữ Pillow 10.2.0 cho VietOCR)
+scripts/setup_glm.sh --precache-layout  # tạo CẢ HAI venv GLM (Py 3.10–3.12) + mlx_config.yaml:
+                                        #   .venv-mlx  (máy chủ MLX, từ glm-mlx-lock.txt)
+                                        #   .venv-sdk  (glmocr CLI + torch, từ glm-sdk-lock.txt)
+                                        # ghi pipeline.layout.model_dir và cache PP-DocLayoutV3
+scripts/check.sh                        # kỳ vọng ".venv-mlx imports: OK" và ".venv-sdk imports: OK"
+scripts/check_offline.sh                # kỳ vọng "GLM layout config: OK" + mô hình layout đã cache
+scripts/start_glm.sh -b                 # bật máy chủ mô hình (lần đầu sẽ nạp mô hình)
+scripts/start.sh                        # bật cả stack; sau đó kỳ vọng "GLM health: 200"
 ```
+
+Chế độ self-hosted của `glmocr` **bắt buộc** có `pipeline.layout.model_dir`.
+`setup_glm.sh` ghi giá trị này vào `mlx_config.yaml` (mặc định
+`PaddlePaddle/PP-DocLayoutV3_safetensors`, đổi qua `GLM_LAYOUT_MODEL_DIR`).
+`--precache-layout` tải checkpoint đó vào HF cache **mặc định** — nơi
+`glm_adapter.py` tìm — để chạy được offline. Nếu thiếu, GLM OCR báo lỗi
+*"pipeline.layout.model_dir is required for self-hosted layout detection"*.
 
 **Vì sao có ba môi trường Python riêng.** Giao diện SmartDocs **không** import
 GLM-OCR trong cùng tiến trình. `services/ocr_engines/glm_adapter.py` chạy

@@ -149,6 +149,9 @@ if command -v curl >/dev/null 2>&1; then
 fi
 
 hr
+info "For AI model / offline readiness (chat, rewrite, VietOCR config, Argos,"
+info "GLM layout), run:  scripts/check_offline.sh"
+hr
 if [ "$FAIL" -eq 0 ]; then
   ok "Core environment looks good."
 else

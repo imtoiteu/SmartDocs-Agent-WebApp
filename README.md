@@ -35,6 +35,19 @@ scripts/start.sh        # start the full local stack (GLM too, if enabled/availa
 
 Then open **http://localhost:5002** (or the `SMARTDOCS_PORT` you set in `.env`) and log in.
 
+**Offline-first note:** with `OFFLINE=1` (the default) AI models load only from
+local caches. The web app, login, upload, document management and basic correction
+work immediately, but **chat, AI rewrite, VietOCR, offline translation and GLM OCR
+need a one-time online priming**:
+
+```bash
+.venv/bin/python tools/setup_offline.py   # cache chat+rewrite (Qwen), PhoBERT,
+                                          # embeddings, VietOCR weights+config.yml, Argos
+scripts/check_offline.sh                  # report: each feature usable / needs-setup / fallback
+```
+
+Full guide: **[docs/OFFLINE_SETUP_EN.md](docs/OFFLINE_SETUP_EN.md)** · **[docs/OFFLINE_SETUP_VI.md](docs/OFFLINE_SETUP_VI.md)**.
+
 Individual services:
 
 ```bash
@@ -47,12 +60,19 @@ scripts/stop.sh         # stop background services (web + GLM)
 (`GLM-OCR/`); no external path needed on a clean clone:
 
 ```bash
-scripts/setup.sh        # main SmartDocs venv (keeps Pillow 10.2.0 for VietOCR)
-scripts/setup_glm.sh    # create BOTH GLM venvs (.venv-mlx server + .venv-sdk CLI)
-scripts/check.sh        # verify both venvs' imports, Pillow, ports, health
-scripts/start_glm.sh -b # start the GLM model server in the background
-scripts/start.sh        # full stack
+scripts/setup.sh                       # main SmartDocs venv (keeps Pillow 10.2.0 for VietOCR)
+scripts/setup_glm.sh --precache-layout # BOTH GLM venvs + write layout.model_dir + cache PP-DocLayoutV3
+scripts/check.sh                       # verify both venvs' imports, Pillow, ports, health
+scripts/check_offline.sh               # verify GLM layout config + layout model cache
+scripts/start_glm.sh -b                # start the GLM model server in the background
+scripts/start.sh                       # full stack
 ```
+
+> `--precache-layout` downloads the PP-DocLayoutV3 checkpoint into the **default**
+> HF cache (`~/.cache/huggingface`) — where `glm_adapter.py` looks — so self-hosted
+> layout detection works offline. Without a cached layout model + a
+> `pipeline.layout.model_dir` in `mlx_config.yaml`, GLM OCR fails with
+> *"pipeline.layout.model_dir is required for self-hosted layout detection"*.
 
 **Three isolated Python environments** (this is the key to why GLM works without
 breaking VietOCR):
@@ -121,13 +141,16 @@ run_windows.bat         # Windows
 
 | Capability | Works immediately | Needs extra setup |
 |---|---|---|
-| Legacy PaddleOCR, PaddleOCR Modern, VietOCR | ✅ (models fetched on first use / via helper) | — |
-| GLM-OCR engine | — | `scripts/setup_glm.sh` (repo-local venv) + MLX server, **Apple Silicon only** |
-| Correction, extractive summarization, text reading | ✅ | — |
+| Legacy PaddleOCR, PaddleOCR Modern | ✅ (models fetched on first online OCR run) | pre-cache via `tools/setup_offline.py` for offline |
+| VietOCR | — | `tools/setup_offline.py` — needs `vgg_transformer.pth` **and** `models/vietocr/config.yml` (both created by it) |
+| GLM-OCR engine | — | `scripts/setup_glm.sh --precache-layout` (repo-local venvs + PP-DocLayoutV3) + MLX server, **Apple Silicon only** |
+| Correction (rule-based), extractive summarization, text reading | ✅ | — |
 | Translation (online) | ✅ (needs internet) | — |
-| Translation (offline / Argos) | — | Argos packages in `MODEL_DIR` |
-| RAG chat / AI rewrite (local Qwen) | ✅ (downloads model unless `OFFLINE=1`) | Pre-download for offline use |
+| Translation (offline / Argos) | — | `tools/setup_offline.py` (Argos packages in `MODEL_DIR`) |
+| RAG chat (Qwen 3B + 1.5B) / AI rewrite (Qwen 1.5B) | — with `OFFLINE=1` | `tools/setup_offline.py` caches all three models |
 | Agent with cloud LLMs (Groq / Gemini) | — | API keys in `.env` (falls back to local Qwen) |
+
+Verify readiness anytime with **`scripts/check_offline.sh`**.
 
 Full instructions: **[docs/INSTALLATION.md](docs/INSTALLATION.md)**.
 Production deployment: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.

@@ -322,6 +322,12 @@ class _Config:
             _first_existing([self.GLM_ROOT / "mlx_config.yaml",
                              self.GLM_ROOT / "glmocr" / "config.yaml"],
                             self.GLM_ROOT / "mlx_config.yaml"))
+        # Layout model for GLM self-hosted mode. glmocr requires
+        # pipeline.layout.model_dir; setup_glm.sh writes this value into
+        # mlx_config.yaml. May be a Hugging Face model id (default, cached in the
+        # DEFAULT HF cache) or an absolute local checkpoint directory.
+        self.GLM_LAYOUT_MODEL_DIR: str = os.environ.get(
+            "GLM_LAYOUT_MODEL_DIR", "PaddlePaddle/PP-DocLayoutV3_safetensors")
         # Local MLX model server (OpenAI-compatible). Started manually via
         # tools/glm_serve.sh; the adapter health-checks it before each run.
         self.GLM_OCR_API_URL: str  = os.environ.get("GLM_OCR_API_URL", "http://localhost:8080")
@@ -383,6 +389,108 @@ class _Config:
             "argos":      any(self.ARGOS_DIR.glob("packages/*/"))            if self.ARGOS_DIR.exists() else False,
         }
         return results
+
+    # ── Comprehensive offline-readiness probe (feature-level) ────────────────
+    def _hf_cache_dir_for(self, model_id: str):
+        """Return the first HF cache dir that holds ``model_id`` (or None).
+
+        Checks BOTH the app's redirected cache (models/huggingface/, where Qwen /
+        PhoBERT / sentence-transformers live) AND the DEFAULT ~/.cache/huggingface
+        cache. The GLM layout model is deliberately kept in the default cache
+        because glm_adapter.py strips HF_HOME before shelling out to glmocr.
+        """
+        name = "models--" + model_id.replace("/", "--")
+        default_hub = Path.home() / ".cache" / "huggingface" / "hub"
+        for root in (self.HF_DIR, self.HF_DIR / "hub", default_hub):
+            try:
+                if root.exists():
+                    hit = next(iter(root.glob(name + "*")), None)
+                    if hit is not None:
+                        return hit
+            except Exception:
+                pass
+        return None
+
+    def _has_hf_model(self, model_id: str) -> bool:
+        return self._hf_cache_dir_for(model_id) is not None
+
+    def check_offline_readiness(self) -> dict:
+        """
+        Feature-level readiness snapshot used by scripts/check_offline.sh (and
+        available to status endpoints). Purely filesystem inspection — never
+        loads a model, never touches the network.
+
+        Each entry is (bool_ready, human_status_string).
+        """
+        vietocr_cfg = self.MODEL_DIR / "vietocr" / "config.yml"
+        vietocr_wts = (Path(self.VIETOCR_WEIGHTS) if self.VIETOCR_WEIGHTS
+                       else self.MODEL_DIR / "vietocr" / f"{self.VIETOCR_CONFIG}.pth")
+
+        chat_primary  = self._has_hf_model(self.CHAT_MODEL)
+        chat_fallback = self._has_hf_model(self.FALLBACK_CHAT_MODEL)
+        rewrite       = self._has_hf_model(self.QWEN_MODEL)
+        phobert       = self._has_hf_model(self.PHOBERT_MODEL)
+        sbert_id      = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        embeddings    = self._has_hf_model(sbert_id)
+        argos         = any(self.ARGOS_DIR.glob("packages/*/")) if self.ARGOS_DIR.exists() else False
+        glm_layout    = self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR) if not Path(self.GLM_LAYOUT_MODEL_DIR).is_dir() else Path(self.GLM_LAYOUT_MODEL_DIR).exists()
+
+        setup = "run tools/setup_offline.py (online)"
+        return {
+            "vietocr_config": (vietocr_cfg.exists(),
+                               str(vietocr_cfg) + ("" if vietocr_cfg.exists() else f"  ← MISSING ({setup})")),
+            "vietocr_weights": (vietocr_wts.exists(),
+                                str(vietocr_wts) + ("" if vietocr_wts.exists() else f"  ← MISSING ({setup})")),
+            "chat_primary":  (chat_primary,  self.CHAT_MODEL          + ("" if chat_primary  else f"  ← MISSING ({setup})")),
+            "chat_fallback": (chat_fallback, self.FALLBACK_CHAT_MODEL + ("" if chat_fallback else f"  ← MISSING ({setup})")),
+            "ai_rewrite":    (rewrite,       self.QWEN_MODEL          + ("" if rewrite       else f"  ← MISSING ({setup})")),
+            "phobert":       (phobert,       self.PHOBERT_MODEL       + ("" if phobert       else "  ← MISSING (extractive TF-IDF fallback still works)")),
+            "embeddings":    (embeddings,    sbert_id                 + ("" if embeddings    else "  ← MISSING (char-hash retrieval fallback still works)")),
+            "argos":         (argos,         (f"{sum(1 for _ in self.ARGOS_DIR.glob('packages/*/'))} package(s) in {self.ARGOS_DIR/'packages'}" if argos else f"no packages  ← MISSING ({setup}); online Google translate still works")),
+            "glm_layout_model": (glm_layout, str(self.GLM_LAYOUT_MODEL_DIR) + ("" if glm_layout else "  ← not cached (setup_glm.sh --precache-layout, or first online run)")),
+        }
+
+    def offline_readiness_report(self) -> str:
+        """Human-readable feature readiness matrix (used by check_offline.sh)."""
+        r = self.check_offline_readiness()
+        paddle = self.check_models()
+        mark = lambda ok: ("✅" if ok else "❌")
+        rows = [
+            ("VietOCR config.yml",   r["vietocr_config"]),
+            ("VietOCR weights",      r["vietocr_weights"]),
+            ("Chat model (primary)", r["chat_primary"]),
+            ("Chat model (fallback)",r["chat_fallback"]),
+            ("AI Rewrite (Qwen)",    r["ai_rewrite"]),
+            ("PhoBERT summarize",    r["phobert"]),
+            ("Embeddings (RAG)",     r["embeddings"]),
+            ("Argos offline transl.",r["argos"]),
+            ("GLM layout model",     r["glm_layout_model"]),
+        ]
+        lines = [
+            "  ── Offline model readiness ──────────────────────",
+            f"  Mode       : {'🔒 OFFLINE (local only)' if self.OFFLINE else '🌐 ONLINE (downloads allowed)'}",
+            f"  MODEL_DIR  : {self.MODEL_DIR}",
+            f"  HF cache   : {self.HF_DIR}",
+            f"  Argos dir  : {self.ARGOS_DIR}",
+            f"  {mark(paddle['paddle_det'])} Paddle det : "
+            + ("cached" if paddle['paddle_det'] else "downloads on first OCR run (needs internet once)"),
+            f"  {mark(paddle['paddle_rec'])} Paddle rec : "
+            + ("cached" if paddle['paddle_rec'] else "downloads on first OCR run (needs internet once)"),
+        ]
+        for label, (ok, detail) in rows:
+            lines.append(f"  {mark(ok)} {label:<21}: {detail}")
+        # Feature usability rollup
+        chat_ok = r["chat_primary"][0] or r["chat_fallback"][0]
+        vietocr_ok = r["vietocr_config"][0] and r["vietocr_weights"][0]
+        lines += [
+            "  ── Feature usability now ────────────────────────",
+            f"  VietOCR OCR      : {'usable' if vietocr_ok else 'NEEDS setup_offline (config.yml + weights)'}",
+            f"  AI Chat          : {'usable' if chat_ok else 'NEEDS setup_offline (Qwen chat model)'}",
+            f"  AI Rewrite       : {'usable' if r['ai_rewrite'][0] else 'NEEDS setup_offline (Qwen rewrite model)'}",
+            f"  Offline translate: {'usable' if r['argos'][0] else 'online Google only until Argos installed'}",
+            f"  GLM OCR layout   : {'config+cache OK (needs MLX server running)' if r['glm_layout_model'][0] else 'NEEDS layout model cache (setup_glm.sh)'}",
+        ]
+        return "\n".join(lines)
 
 
     def summary(self) -> str:

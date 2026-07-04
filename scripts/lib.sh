@@ -82,7 +82,11 @@ normalize_env() {
   GLM_PORT="${GLM_PORT:-8080}"
   GLM_OCR_API_URL="${GLM_OCR_API_URL:-http://${GLM_HOST}:${GLM_PORT}}"
   GLM_MODEL="${GLM_MODEL:-mlx-community/GLM-OCR-bf16}"
-  export GLM_HOST GLM_PORT GLM_OCR_API_URL GLM_MODEL
+  # Layout model for GLM self-hosted mode (glmocr requires pipeline.layout.model_dir).
+  # Default is a Hugging Face id (cached in the DEFAULT HF cache); may be an
+  # absolute local checkpoint dir. setup_glm.sh writes this into mlx_config.yaml.
+  GLM_LAYOUT_MODEL_DIR="${GLM_LAYOUT_MODEL_DIR:-PaddlePaddle/PP-DocLayoutV3_safetensors}"
+  export GLM_HOST GLM_PORT GLM_OCR_API_URL GLM_MODEL GLM_LAYOUT_MODEL_DIR
 
   # GLM directory (clean-clone friendly): explicit GLM_OCR_DIR / legacy GLM_ROOT
   # wins; otherwise the vendored copy INSIDE this repo (<repo>/GLM-OCR).
