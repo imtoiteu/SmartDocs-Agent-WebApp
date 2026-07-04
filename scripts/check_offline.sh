@@ -106,41 +106,55 @@ else
   info "VietOCR deep check    : skipped (vietocr not importable in main venv)"
 fi
 
-# --- Argos runtime validation --------------------------------------------------
-# The matrix above counts packages via metadata.json on disk. This additionally
-# loads them through ARGOSTRANSLATE ITSELF — the exact runtime path — so a
-# "files on disk but library can't load them" mismatch is caught here, not in the
-# translation UI. Offline-safe (no index update, no downloads, 10s socket cap).
+# --- Argos runtime validation + REAL translation smoke test --------------------
+# The matrix above counts packages via metadata.json on disk. This goes through
+# the EXACT app runtime path instead: services/translate_service.py (which
+# applies the stanza-compat shims and the deterministic sentencizer) and actually
+# translates "hello" en→vi and "xin chào" vi→en. Argos offline is reported
+# USABLE only if that real translation succeeds. Offline-safe; 180s alarm cap
+# per direction (first call loads the ctranslate2 model, so it takes a while).
 if "$PY" -c 'import argostranslate' >/dev/null 2>&1; then
   ARGOS_RT="$(cd "$REPO_ROOT" && "$PY" - 2>&1 <<'PYEOF'
-import socket, sys
+import signal, socket, sys
 sys.path.insert(0, ".")
 socket.setdefaulttimeout(10)              # fail fast if anything touches the net
-from config import cfg                    # sets ARGOS_PACKAGES_DIR before argos import
+from services import translate_service as ts   # the same module /api/translate uses
+from config import cfg
 pkg_dir = cfg.ARGOS_DIR / "packages"
 on_disk = cfg._argos_installed_pairs()
-try:
-    import argostranslate.settings as s
-    from pathlib import Path
-    s.data_dir = cfg.ARGOS_DIR
-    s.package_data_dir = pkg_dir
-    s.package_dirs = [pkg_dir] + [d for d in getattr(s, "package_dirs", []) if Path(d) != pkg_dir]
-    import argostranslate.package as ap
-    loadable = sorted(f"{p.from_code}→{p.to_code}" for p in ap.get_installed_packages())
-except Exception as e:
-    print(f"LIBRARY ERROR in {pkg_dir}: {e}")
-    sys.exit(1)
+loadable = sorted(f"{f}→{t}" for f, t in ts._get_installed_pairs())
 if on_disk and not loadable:
     print(f"MISMATCH: {len(on_disk)} package(s) on disk in {pkg_dir} but argostranslate loads NONE")
     sys.exit(1)
-print(f"{len(loadable)} pair(s) loadable from {pkg_dir}: {', '.join(loadable) or 'none'}")
+if not loadable:
+    print(f"no packages loadable from {pkg_dir} — offline translation NOT usable")
+    sys.exit(1)
+print(f"{len(loadable)} pair(s) loadable from {pkg_dir}: {', '.join(loadable)}")
+signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("translation timed out")))
+failures = []
+for text, fc, tc in (("hello", "en", "vi"), ("xin chào", "vi", "en")):
+    if f"{fc}→{tc}" not in loadable:
+        failures.append(f"{fc}→{tc}: package not loadable")
+        continue
+    try:
+        signal.alarm(180)
+        out = ts._translate_offline(text, fc, tc)
+        signal.alarm(0)
+        print(f"smoke {fc}→{tc}: {text!r} → {out.strip()!r}")
+    except Exception as e:
+        signal.alarm(0)
+        failures.append(f"{fc}→{tc}: {e}")
+if failures:
+    print("Argos offline usable: NO — " + " | ".join(failures))
+    sys.exit(1)
+print("Argos offline usable: YES (real en→vi and vi→en translation succeeded)")
 PYEOF
 )"
   if [ $? -eq 0 ]; then
-    ok  "Argos runtime check  : $ARGOS_RT"
+    printf '%s\n' "$ARGOS_RT" | while IFS= read -r line; do ok "Argos runtime : $line"; done
   else
-    warn "Argos runtime check  : $ARGOS_RT"
-    warn "  (runtime translation will fail the same way — check the server log / re-run scripts/setup_offline.sh)"
+    printf '%s\n' "$ARGOS_RT" | while IFS= read -r line; do warn "Argos runtime : $line"; done
+    warn "  (the translation UI will fail the same way — see server log / re-run scripts/setup_offline.sh)"
   fi
 else
   info "Argos runtime check  : skipped (argostranslate not importable in main venv)"

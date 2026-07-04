@@ -147,6 +147,55 @@ try:
 except Exception as _e:
     pass   # argostranslate not installed
 
+
+# ── Bypass Argos' StanzaSentencizer (old checkpoints vs modern stanza) ────────
+# Argos packages bundle stanza TOKENIZER CHECKPOINTS trained with old stanza.
+# Modern stanza's tokenization Trainer.load() reads the checkpoint's saved config
+# and indexes keys that old checkpoints simply don't have — first
+# args['feat_dropout'] (models/tokenization/trainer.py:93), then
+# checkpoint['lexicon'] (line 96), then state_dict/architecture mismatches.
+# Backfilling one key at a time is an unwinnable cascade, so for offline
+# translation we replace the stanza-based sentencizer with a DETERMINISTIC
+# splitter: paragraphs by newline, sentences on ".!?…。！？" boundaries. Sentence
+# splitting is only pre-chunking for the ctranslate2 model — translation quality
+# comes from the model itself. No network, no stanza.Pipeline, nothing to cascade.
+class _DeterministicSentencizer:
+    """Drop-in for argostranslate.sbd.StanzaSentencizer (same interface)."""
+
+    def __init__(self, pkg=None):
+        self.pkg = pkg
+
+    def split_sentences(self, text):
+        import re
+        sentences = []
+        for line in str(text).split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # ASCII enders need trailing whitespace (protects "3.14", "e.g.x");
+            # fullwidth CJK enders end a sentence even with no space after them.
+            parts = re.split(r"(?<=[.!?…])\s+|(?<=[。！？])\s*", line)
+            sentences.extend(p for p in (s.strip() for s in parts) if p)
+        return sentences or [str(text)]
+
+    def __str__(self):
+        return "DeterministicSentencizer"
+
+
+try:
+    import argostranslate.sbd as _argos_sbd
+    import argostranslate.translate as _argos_translate
+    _argos_sbd.StanzaSentencizer = _DeterministicSentencizer
+    # translate.py binds the name into its own namespace at import
+    # (from argostranslate.sbd import StanzaSentencizer), so patch it there too —
+    # PackageTranslation.__init__ resolves it from that module's globals.
+    _argos_translate.StanzaSentencizer = _DeterministicSentencizer
+    logging.getLogger(__name__).info(
+        "[ARGOS] StanzaSentencizer → DeterministicSentencizer "
+        "(old Argos stanza checkpoints are incompatible with modern stanza)")
+except Exception:
+    pass   # argostranslate not installed
+
 LANGUAGES = {
     "auto": "auto",
     "en":   "english",
@@ -271,9 +320,27 @@ def _translate_offline(text: str, from_lang: str, to_lang: str) -> str:
         result = translation.translate(text)
     except Exception as e:
         logger.exception(f"[ARGOS] Translation failed for {from_code}→{to_code}")
+        # Name the failing STAGE from the traceback so the UI error localises the
+        # layer (sentence splitting vs tokenizer vs ctranslate2) without log-diving.
+        import traceback as _tb
+        stage = "translation runtime"
+        for fr in reversed(_tb.extract_tb(e.__traceback__)):
+            fn = fr.filename.replace("\\", "/")
+            if "/stanza/" in fn or "sbd.py" in fn:
+                stage = "sentence splitting (StanzaSentencizer/stanza)"
+                break
+            if "tokenizer" in fn or "apply_bpe" in fn:
+                stage = "tokenizer"
+                break
+            if "ctranslate2" in fn:
+                stage = "ctranslate2 inference"
+                break
+        pairs = ", ".join(sorted(f"{f}→{t}" for f, t in _get_installed_pairs())) or "none"
         raise RuntimeError(
-            f"Offline translation failed for {from_code}→{to_code}: {e} "
-            f"(package is installed in {_argos_packages_dir}; see server log)"
+            f"Offline translation failed for {from_code}→{to_code} at stage "
+            f"[{stage}]: {type(e).__name__}: {e} "
+            f"(package dir: {_argos_packages_dir}; installed pairs: {pairs}; "
+            "full traceback in server log)"
         ) from e
 
     if not result or not result.strip():
