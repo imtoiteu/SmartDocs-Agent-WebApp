@@ -2,7 +2,9 @@
 
 This document describes how to wrap the current SmartDocs-Agent local runtime in
 a desktop application (Tauri or Electron) **later**. Nothing here is implemented
-yet — it is a plan. The immediate goal was a clean local runtime that a desktop
+yet — it is a plan. The concrete migration plan for the dedicated
+[SmartDocs-Agent-DesktopApp](https://github.com/imtoiteu/SmartDocs-Agent-DesktopApp)
+repository lives in [DESKTOP_MIGRATION_PLAN.md](DESKTOP_MIGRATION_PLAN.md). The immediate goal was a clean local runtime that a desktop
 shell can drive; that is what the `scripts/` launchers now provide.
 
 > Scope note (per project rules): this is **additive**. A desktop wrapper sits on

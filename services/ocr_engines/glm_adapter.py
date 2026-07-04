@@ -97,6 +97,64 @@ class GLMOCREngine(OCREngine):
     # calm retry hint, NOT a fatal-looking connection error.
     _LOADING_MSG = "GLM server is still loading the OCR model. Please wait and retry."
 
+    # Cross-platform guard: local MLX exists only on macOS Apple Silicon.
+    _UNSUPPORTED_MLX_MSG = ("GLM local MLX is only supported on macOS Apple "
+                            "Silicon. Use external_server, maas_api, or disable GLM.")
+
+    def _check_mode(self, w: int, h: int):
+        """Validate GLM_OCR_MODE for this platform. Returns an error dict to
+        return verbatim, or None when the request may proceed.
+
+        Every unsupported/unconfigured combination answers with a clear,
+        structured message — never an exception, never a crash — so on
+        Windows/Linux the app keeps running and only the GLM engine explains
+        itself (PaddleOCR/VietOCR are unaffected).
+        """
+        mode = cfg.GLM_OCR_MODE
+        if mode == "disabled":
+            return self._error(
+                "GLM OCR is disabled (GLM_OCR_MODE=disabled). The other OCR "
+                "engines are unaffected. Enable it in .env with "
+                "GLM_OCR_MODE=local_mlx (macOS Apple Silicon), external_server, "
+                "or maas_api.", w, h)
+        if mode == "ollama":
+            # glmocr ships api_mode=ollama_generate, but the integration is NOT
+            # verified in SmartDocs yet — refuse instead of promising support.
+            # TODO(glm-ollama): verify glmocr selfhosted with
+            # pipeline.ocr_api.api_mode=ollama_generate against
+            # GLM_OLLAMA_BASE_URL/GLM_OLLAMA_MODEL, then wire it here.
+            return self._error(
+                "GLM via Ollama is not verified in SmartDocs yet (reserved "
+                "mode). Use external_server (openai_compatible) or maas_api.", w, h)
+        if mode not in ("local_mlx", "external_server", "maas_api"):
+            return self._error(
+                f"Unknown GLM_OCR_MODE '{mode}'. Valid modes: "
+                + ", ".join(cfg.GLM_OCR_MODES) + ".", w, h)
+        if mode == "local_mlx" and not cfg.IS_APPLE_SILICON:
+            return self._error(self._UNSUPPORTED_MLX_MSG, w, h)
+        if mode == "external_server":
+            if cfg.GLM_EXTERNAL_PROTOCOL == "sdk_server":
+                # TODO(glm-sdk-server): POST the image to
+                # <GLM_OCR_API_URL>/glmocr/parse (the glmocr SDK server does
+                # layout+OCR remotely; see GLM-OCR/glmocr/server.py) and map the
+                # JSON/markdown response into _collect()'s shape. Config is
+                # reserved; only the transport is missing.
+                return self._error(
+                    "GLM_EXTERNAL_PROTOCOL=sdk_server is not implemented yet — "
+                    "SmartDocs currently reaches external GLM servers via the "
+                    "openai_compatible protocol (vLLM / SGLang / mlx_vlm). Set "
+                    "GLM_EXTERNAL_PROTOCOL=openai_compatible.", w, h)
+            if cfg.GLM_EXTERNAL_PROTOCOL != "openai_compatible":
+                return self._error(
+                    f"Unknown GLM_EXTERNAL_PROTOCOL "
+                    f"'{cfg.GLM_EXTERNAL_PROTOCOL}'. Valid: openai_compatible, "
+                    "sdk_server (reserved).", w, h)
+        if mode == "maas_api" and not cfg.GLM_MAAS_API_KEY:
+            return self._error(
+                "GLM_OCR_MODE=maas_api needs an API key — set GLM_MAAS_API_KEY "
+                "(or ZHIPU_API_KEY) in .env.", w, h)
+        return None
+
     def _server_up(self) -> bool:
         """Cheap TCP connect to the MLX model server. True if something is listening."""
         try:
@@ -131,7 +189,15 @@ class GLMOCREngine(OCREngine):
         import urllib.error
         import urllib.request
 
-        url = cfg.GLM_OCR_API_URL.rstrip("/") + "/health"
+        # Probe scheme://host:port/health — GLM_OCR_API_URL may carry a path in
+        # external_server mode (e.g. …/v1/chat/completions); /health always
+        # lives at the server root (mlx_vlm, vLLM, SGLang and the glmocr SDK
+        # server all expose it there).
+        u = urlparse(cfg.GLM_OCR_API_URL)
+        base = f"{u.scheme or 'http'}://{u.hostname or 'localhost'}"
+        if u.port:
+            base += f":{u.port}"
+        url = base + "/health"
         try:
             with urllib.request.urlopen(url, timeout=5) as r:
                 raw = r.read()
@@ -166,18 +232,35 @@ class GLMOCREngine(OCREngine):
         except Exception as e:
             return self._error(f"GLM OCR: cannot open image ({e})")
 
+        # Cross-platform mode gate (disabled / wrong platform / reserved modes
+        # answer with a clear message instead of a confusing connection error).
+        mode = cfg.GLM_OCR_MODE
+        mode_err = self._check_mode(w, h)
+        if mode_err is not None:
+            return mode_err
+
+        # Every supported mode shells out to the glmocr CLI (local layout for
+        # local_mlx/external_server; thin cloud passthrough for maas_api).
         if not Path(cfg.GLM_SDK_PYTHON).exists():
             return self._error(
                 f"GLM OCR SDK not found at {cfg.GLM_SDK_PYTHON}. "
                 f"Install the GLM-OCR venv (see GLM-OCR/GLM-OCR).", w, h)
 
-        if not self._server_up():
-            return self._error(
-                "GLM-OCR model server is not running on "
-                f"{cfg.GLM_OCR_API_URL}. Start it with tools/glm_serve.sh.", w, h)
+        # Server checks apply to server-backed modes only (maas_api is a cloud
+        # HTTPS API — nothing local to probe, glmocr reports its own errors).
+        if mode in ("local_mlx", "external_server"):
+            if not self._server_up():
+                if mode == "external_server":
+                    return self._error(
+                        "External GLM server is not reachable at "
+                        f"{cfg.GLM_OCR_API_URL}. Check GLM_OCR_API_URL and that "
+                        "the vLLM/SGLang/MLX server is running.", w, h)
+                return self._error(
+                    "GLM-OCR model server is not running on "
+                    f"{cfg.GLM_OCR_API_URL}. Start it with tools/glm_serve.sh.", w, h)
 
-        if self._server_ready() is False:
-            return self._error(self._LOADING_MSG, w, h)
+            if self._server_ready() is False:
+                return self._error(self._LOADING_MSG, w, h)
 
         # The GLM layout model lives in the PROJECT-LOCAL HF cache
         # (models/huggingface/hub — same cache as every other model; cached by
@@ -204,9 +287,34 @@ class GLMOCREngine(OCREngine):
         try:
             cmd = [
                 cfg.GLM_SDK_PYTHON, "-m", "glmocr.cli", "parse", str(image_path),
-                "--config", cfg.GLM_CONFIG_YAML, "--mode", "selfhosted",
+                "--config", cfg.GLM_CONFIG_YAML,
                 "--output", out_dir, "--log-level", "WARNING",
             ]
+            if mode == "maas_api":
+                # Thin passthrough to the Zhipu cloud API — glmocr does no local
+                # layout/OCR in this mode. Needs internet + GLM_MAAS_API_KEY.
+                cmd += ["--mode", "maas"]
+                env["ZHIPU_API_KEY"] = cfg.GLM_MAAS_API_KEY
+                if cfg.GLM_MAAS_API_URL:
+                    cmd += ["--set", "pipeline.maas.api_url", cfg.GLM_MAAS_API_URL]
+                cmd += ["--set", "pipeline.maas.verify_ssl",
+                        "true" if cfg.GLM_MAAS_VERIFY_SSL else "false"]
+            else:
+                cmd += ["--mode", "selfhosted"]
+                if mode == "external_server":
+                    # glmocr's pipeline.ocr_api.api_url is the FULL endpoint URL
+                    # (GLMOCR_OCR_API_URL env override, see glmocr/config.py).
+                    # Accept a bare base URL by appending the OpenAI path.
+                    api_url = cfg.GLM_OCR_API_URL.rstrip("/")
+                    if not api_url.endswith("/chat/completions"):
+                        api_url += "/v1/chat/completions"
+                    env["GLMOCR_OCR_API_URL"] = api_url
+                    if cfg.GLM_OCR_MODEL:
+                        env["GLMOCR_OCR_MODEL"] = cfg.GLM_OCR_MODEL
+                    if cfg.GLM_OCR_API_KEY:
+                        env["GLMOCR_OCR_API_KEY"] = cfg.GLM_OCR_API_KEY
+                    cmd += ["--set", "pipeline.ocr_api.verify_ssl",
+                            "true" if cfg.GLM_OCR_VERIFY_SSL else "false"]
             try:
                 proc = subprocess.run(
                     cmd, cwd=cfg.GLM_ROOT, env=env, capture_output=True, text=True,
@@ -220,11 +328,22 @@ class GLMOCREngine(OCREngine):
                 combined = (proc.stderr or "") + (proc.stdout or "")
                 # glmocr's connect test raises "Failed to connect to API server
                 # at …/v1/chat/completions within 30 seconds" when the server is
-                # listening but the model load outlasted its window — a cold
-                # start, not a fatal failure. Show the retry message instead.
+                # listening but the model load outlasted its window — on
+                # local_mlx a cold start, not a fatal failure. Show the retry
+                # message; for remote backends name the endpoint instead.
                 if "Failed to connect to API server" in combined:
-                    return self._error(self._LOADING_MSG, w, h,
-                                       round((time.time() - t0) * 1000))
+                    if mode == "local_mlx":
+                        return self._error(self._LOADING_MSG, w, h,
+                                           round((time.time() - t0) * 1000))
+                    endpoint = (cfg.GLM_MAAS_API_URL if mode == "maas_api"
+                                else cfg.GLM_OCR_API_URL)
+                    return self._error(
+                        f"GLM backend not reachable ({endpoint}) — check the "
+                        "URL/network"
+                        + (", API key" if mode == "maas_api" else "")
+                        + ", or whether the remote model is still loading. "
+                        "Please retry.", w, h,
+                        round((time.time() - t0) * 1000))
                 tail = (proc.stderr or proc.stdout or "").strip().splitlines()
                 tail = " ".join(tail[-3:])[:300] if tail else "no output"
                 return self._error(f"GLM OCR failed: {tail}", w, h,

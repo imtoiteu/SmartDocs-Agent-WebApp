@@ -107,83 +107,123 @@ else
 fi
 
 # --- GLM (optional) ---------------------------------------------------------
+# GLM_OCR_MODE (lib.sh; platform-aware default) decides which checks apply:
+#   disabled        → nothing to check
+#   local_mlx       → BOTH venvs + local server readiness (Apple Silicon)
+#   external_server → .venv-sdk only (layout runs locally) + remote URL probe
+#   maas_api        → .venv-sdk only + API-key presence (cloud passthrough)
+#   ollama          → reserved / unverified
 # Two independent venvs (see scripts/setup_glm.sh):
 #   .venv-mlx = MLX model server (mlx_vlm/mlx_lm)   — NO torch, NO glmocr
 #   .venv-sdk = glmocr CLI / layout detector        — torch + glmocr (UI uses this)
 hr
 info "GLM OCR (optional):"
+echo "    GLM_OCR_MODE     : $GLM_OCR_MODE"
 echo "    GLM_OCR_DIR      : $GLM_OCR_DIR"
-if [ -d "$GLM_OCR_DIR" ]; then
-  ok  "GLM-OCR dir exists   : yes ($( [ -f "$GLM_OCR_DIR/pyproject.toml" ] && echo 'vendored SDK present' || echo 'dir present'))"
+if [ "$GLM_OCR_MODE" = "disabled" ]; then
+  info "GLM OCR              : disabled — Legacy/VietOCR/Modern OCR are unaffected."
+  info "                       (enable: GLM_OCR_MODE=local_mlx on macOS Apple Silicon,"
+  info "                        or external_server / maas_api on any OS — see .env.example)"
 else
-  warn "GLM-OCR dir exists   : NO — run scripts/setup_glm.sh or set GLM_OCR_DIR"
-fi
-
-# ── .venv-mlx (MLX model server) ──
-MLX_PY="$GLM_OCR_DIR/.venv-mlx/bin/python"
-if [ -x "$MLX_PY" ]; then
-  MLX_VER="$("$MLX_PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
-  ok  ".venv-mlx python     : $MLX_PY (v$MLX_VER)"
-  if "$MLX_PY" -c "import mlx_vlm, mlx_lm, transformers" >/dev/null 2>&1; then
-    ok  ".venv-mlx imports    : OK (mlx_vlm, mlx_lm, transformers)"
+  if [ -d "$GLM_OCR_DIR" ]; then
+    ok  "GLM-OCR dir exists   : yes ($( [ -f "$GLM_OCR_DIR/pyproject.toml" ] && echo 'vendored SDK present' || echo 'dir present'))"
   else
-    info ".venv-mlx imports    : not available (Apple-Silicon only, or re-run scripts/setup_glm.sh)"
+    warn "GLM-OCR dir exists   : NO — run scripts/setup_glm.sh or set GLM_OCR_DIR"
   fi
-else
-  info ".venv-mlx python     : missing ($MLX_PY) — create with scripts/setup_glm.sh"
-fi
 
-# ── .venv-sdk (glmocr CLI / layout — the venv the UI actually uses) ──
-SDK_PY="$GLM_OCR_DIR/.venv-sdk/bin/python"
-if [ -x "$SDK_PY" ]; then
-  SDK_VER="$("$SDK_PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
-  ok  ".venv-sdk python     : $SDK_PY (v$SDK_VER)"
-  if "$SDK_PY" -c "import torch; import glmocr; from glmocr.layout.layout_detector import PPDocLayoutDetector" >/dev/null 2>&1; then
-    ok  ".venv-sdk imports    : OK (torch, glmocr, PPDocLayoutDetector)"
+  # ── .venv-mlx (MLX model server — only the local_mlx mode needs it) ──
+  if [ "$GLM_OCR_MODE" = "local_mlx" ]; then
+    is_apple_silicon || warn "GLM local MLX is only supported on macOS Apple Silicon. Use external_server, maas_api, or disable GLM."
+    MLX_PY="$GLM_OCR_DIR/.venv-mlx/bin/python"
+    if [ -x "$MLX_PY" ]; then
+      MLX_VER="$("$MLX_PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
+      ok  ".venv-mlx python     : $MLX_PY (v$MLX_VER)"
+      if "$MLX_PY" -c "import mlx_vlm, mlx_lm, transformers" >/dev/null 2>&1; then
+        ok  ".venv-mlx imports    : OK (mlx_vlm, mlx_lm, transformers)"
+      else
+        info ".venv-mlx imports    : not available (Apple-Silicon only, or re-run scripts/setup_glm.sh)"
+      fi
+    else
+      info ".venv-mlx python     : missing ($MLX_PY) — create with scripts/setup_glm.sh"
+    fi
+  fi
+
+  # ── .venv-sdk (glmocr CLI / layout — every non-disabled mode uses it) ──
+  SDK_PY="$GLM_OCR_DIR/.venv-sdk/bin/python"
+  if [ -x "$SDK_PY" ]; then
+    SDK_VER="$("$SDK_PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
+    ok  ".venv-sdk python     : $SDK_PY (v$SDK_VER)"
+    if "$SDK_PY" -c "import torch; import glmocr; from glmocr.layout.layout_detector import PPDocLayoutDetector" >/dev/null 2>&1; then
+      ok  ".venv-sdk imports    : OK (torch, glmocr, PPDocLayoutDetector)"
+    else
+      warn ".venv-sdk imports    : FAILED — run scripts/setup_glm.sh"
+      "$SDK_PY" -c "import torch; import glmocr; from glmocr.layout.layout_detector import PPDocLayoutDetector" 2>&1 | tail -3 | sed 's/^/         ↳ /' >&2
+      FAIL=1
+    fi
   else
-    warn ".venv-sdk imports    : FAILED — run scripts/setup_glm.sh"
-    "$SDK_PY" -c "import torch; import glmocr; from glmocr.layout.layout_detector import PPDocLayoutDetector" 2>&1 | tail -3 | sed 's/^/         ↳ /' >&2
-    FAIL=1
+    warn ".venv-sdk python     : MISSING ($SDK_PY) — GLM OCR from the UI will fail; run scripts/setup_glm.sh"
   fi
-else
-  warn ".venv-sdk python     : MISSING ($SDK_PY) — GLM OCR from the UI will fail; run scripts/setup_glm.sh"
-fi
 
-if port_in_use "$GLM_PORT"; then
-  ok  "GLM port $GLM_PORT       : in use"
-else
-  info "GLM port $GLM_PORT       : free (server not running — optional)"
-fi
-
-if command -v curl >/dev/null 2>&1; then
-  if [ "$ENABLE_GLM" = "true" ]; then
-    # Three distinct facts, NOT one: port listening ≠ model loaded. A cold GLM
-    # server can hold the port while it still loads (or first-run downloads)
-    # the MLX model — OCR requests fail until it finishes.
-    GLM_STATE="$(glm_ready_state)"
-    case "$GLM_STATE" in
-      ready:*)
-        ok  "GLM health           : READY — model loaded (${GLM_STATE#ready:}) on ${GLM_OCR_API_URL}" ;;
-      loading)
-        warn "GLM server starting/loading model; wait or check logs/glm.log"
-        warn "  (port ${GLM_PORT} is listening but inference is not available yet)" ;;
-      no-model)
-        info "GLM health           : server up on ${GLM_OCR_API_URL} but NO model loaded yet"
-        info "                       (lazy mode — the first OCR request loads it; preload is the default via GLM_PRELOAD=true)" ;;
-      unknown)
-        # /health missing (older mlx_vlm?) — fall back to the deep inference
-        # probe. NOTE: on a cold lazy server this triggers the model load.
-        if glm_health; then
-          ok  "GLM health           : 200 on ${GLM_OCR_API_URL} (model: ${GLM_MODEL})"
+  case "$GLM_OCR_MODE" in
+    local_mlx)
+      if port_in_use "$GLM_PORT"; then
+        ok  "GLM port $GLM_PORT       : in use"
+      else
+        info "GLM port $GLM_PORT       : free (server not running — optional)"
+      fi
+      if command -v curl >/dev/null 2>&1; then
+        # Three distinct facts, NOT one: port listening ≠ model loaded. A cold GLM
+        # server can hold the port while it still loads (or first-run downloads)
+        # the MLX model — OCR requests fail until it finishes.
+        GLM_STATE="$(glm_ready_state)"
+        case "$GLM_STATE" in
+          ready:*)
+            ok  "GLM health           : READY — model loaded (${GLM_STATE#ready:}) on ${GLM_OCR_API_URL}" ;;
+          loading)
+            warn "GLM server starting/loading model; wait or check logs/glm.log"
+            warn "  (port ${GLM_PORT} is listening but inference is not available yet)" ;;
+          no-model)
+            info "GLM health           : server up on ${GLM_OCR_API_URL} but NO model loaded yet"
+            info "                       (lazy mode — the first OCR request loads it; preload is the default via GLM_PRELOAD=true)" ;;
+          unknown)
+            # /health missing (older mlx_vlm?) — fall back to the deep inference
+            # probe. NOTE: on a cold lazy server this triggers the model load.
+            if glm_health; then
+              ok  "GLM health           : 200 on ${GLM_OCR_API_URL} (model: ${GLM_MODEL})"
+            else
+              warn "GLM health           : something answers on ${GLM_OCR_API_URL} but not like the GLM server (check what runs on port ${GLM_PORT})"
+            fi ;;
+          down)
+            info "GLM health           : not responding on ${GLM_OCR_API_URL} (start: scripts/start_glm.sh -b)" ;;
+        esac
+      fi ;;
+    external_server)
+      echo "    GLM_OCR_API_URL  : $GLM_OCR_API_URL (protocol: $GLM_EXTERNAL_PROTOCOL)"
+      if [ "$GLM_EXTERNAL_PROTOCOL" = "sdk_server" ]; then
+        warn "GLM external         : protocol sdk_server is RESERVED (not implemented) — use openai_compatible"
+      fi
+      if command -v curl >/dev/null 2>&1; then
+        # /health lives at the server root on vLLM / SGLang / mlx_vlm / the SDK
+        # server — probe scheme://host:port even when the URL carries a path.
+        GLM_BASE_URL="$(printf '%s' "$GLM_OCR_API_URL" | sed -E 's#^(https?://[^/]+).*#\1#')"
+        CODE="$(http_status "$GLM_BASE_URL/health")"
+        if [ "$CODE" = "000" ]; then
+          warn "GLM external         : $GLM_BASE_URL not reachable — check GLM_OCR_API_URL / network / remote server"
         else
-          warn "GLM health           : something answers on ${GLM_OCR_API_URL} but not like the GLM server (check what runs on port ${GLM_PORT})"
-        fi ;;
-      down)
-        info "GLM health           : not responding on ${GLM_OCR_API_URL} (start: scripts/start_glm.sh -b)" ;;
-    esac
-  else
-    info "GLM health           : skipped (ENABLE_GLM=false) — Legacy/VietOCR/Modern OCR still work."
-  fi
+          ok  "GLM external         : $GLM_BASE_URL reachable (GET /health → HTTP $CODE)"
+        fi
+      fi ;;
+    maas_api)
+      if [ -n "${GLM_MAAS_API_KEY:-}${ZHIPU_API_KEY:-}" ]; then
+        ok  "GLM MaaS             : API key set (cloud passthrough — needs internet at OCR time)"
+      else
+        warn "GLM MaaS             : NO API key — set GLM_MAAS_API_KEY (or ZHIPU_API_KEY) in .env"
+      fi ;;
+    ollama)
+      warn "GLM via Ollama       : reserved / NOT verified — GLM OCR will refuse requests (use external_server or maas_api)" ;;
+    *)
+      warn "GLM_OCR_MODE         : unknown value '$GLM_OCR_MODE' (valid: local_mlx external_server maas_api ollama disabled)" ;;
+  esac
 fi
 
 hr

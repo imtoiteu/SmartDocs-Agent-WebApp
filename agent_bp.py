@@ -24,6 +24,7 @@ from typing import Optional
 from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from flask_login import login_required, current_user
 
+from config import cfg
 from models import (log_activity, AgentConversation, ChatConversation, Document,
                     DocumentArtifact, save_artifact, get_or_create_agent_conversation,
                     get_or_create_conversation, add_message,
@@ -511,6 +512,14 @@ def agent_run():
     (existing-module routes) is returned, so the agent orchestrates and the user
     views each result in the UI already built for that feature.
     """
+    # Feature switch (cross-platform): a clear JSON answer, never a crash.
+    if not cfg.ENABLE_AGENT:
+        return jsonify({
+            "success": False, "disabled": True,
+            "error": "The Agent is disabled on this installation "
+                     "(ENABLE_AGENT=false or LLM_PROVIDER=disabled in .env).",
+        }), 503
+
     data = request.get_json(silent=True) or {}
     message = (data.get("message") or "").strip()
     client_history = data.get("history")

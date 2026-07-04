@@ -188,9 +188,23 @@ else
   info "Argos runtime check  : skipped (argostranslate not importable in main venv)"
 fi
 
-# --- GLM venvs (optional, Apple Silicon) ------------------------------------
+# --- GLM venvs (optional) ----------------------------------------------------
+# Which caches the current GLM_OCR_MODE actually needs (lib.sh derives the
+# platform-aware default: local_mlx on macOS Apple Silicon, disabled elsewhere):
+#   local_mlx       → layout model + MLX server model (both project-local)
+#   external_server → layout model only (OCR runs on the remote server)
+#   maas_api        → none (cloud passthrough)
+#   disabled/ollama → none
 hr
 info "GLM OCR (optional):"
+echo "    GLM_OCR_MODE     : $GLM_OCR_MODE"
+case "$GLM_OCR_MODE" in
+  local_mlx)       info "Caches this mode needs: layout model + MLX server model (rows below)" ;;
+  external_server) info "Caches this mode needs: layout model only (OCR runs on the remote server)" ;;
+  maas_api)        info "Caches this mode needs: none (cloud passthrough — rows below are informational)" ;;
+  disabled)        info "Caches this mode needs: none (GLM OCR disabled — rows below are informational)" ;;
+  ollama)          info "Caches this mode needs: n/a (mode reserved / NOT verified in SmartDocs)" ;;
+esac
 echo "    GLM_OCR_DIR      : $GLM_OCR_DIR"
 MLX_PY="$GLM_OCR_DIR/.venv-mlx/bin/python"
 SDK_PY="$GLM_OCR_DIR/.venv-sdk/bin/python"

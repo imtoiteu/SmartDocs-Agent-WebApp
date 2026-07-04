@@ -732,6 +732,16 @@ def summarize():
     summary_mode = data.get("summary_mode", "fast")
     if not text: return jsonify({"success": False, "error": "No text"}), 400
 
+    # Feature switch (cross-platform): a clear JSON answer, never a crash.
+    # Extractive ("fast") summarization stays available — only AI Rewrite is gated.
+    if summary_mode == "ai_rewrite" and not cfg.ENABLE_REWRITE:
+        return jsonify({
+            "success": False, "disabled": True,
+            "error": "AI Rewrite is disabled on this installation "
+                     "(ENABLE_REWRITE=false or LLM_PROVIDER=disabled in .env). "
+                     "Fast (extractive) summarization still works.",
+        }), 503
+
     # If AI Rewrite requested but model is still loading, return informative state
     if summary_mode == "ai_rewrite":
         ai_status = ai_rewrite_service.get_ai_status()
@@ -765,6 +775,68 @@ def summarize_status():
         return jsonify({"success": True, **status})
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "ready": False}), 200
+
+
+@app.route("/api/llm/status", methods=["GET"])
+@login_required
+def llm_status():
+    """Cross-platform LLM status for the UI / desktop shell.
+
+    One place that answers: which provider is configured, which model on which
+    device, whether it is loaded / loading / failed, and — when something is
+    missing — the exact setup step to run. Read-only: never triggers a model
+    load (it reuses the existing status snapshots of the rewrite/chat services
+    and pure-filesystem cache checks from config).
+    """
+    try:
+        rewrite = ai_rewrite_service.get_ai_status()
+        chat = chat_service.get_chat_status()
+        oc_configured = bool(cfg.OPENAI_COMPATIBLE_BASE_URL
+                             and cfg.OPENAI_COMPATIBLE_MODEL)
+        local_cached = cfg._has_hf_model(cfg.LOCAL_LLM_MODEL)
+
+        hint = None
+        if cfg.LLM_PROVIDER == "disabled":
+            hint = ("LLM features are disabled (LLM_PROVIDER=disabled). "
+                    "Set LLM_PROVIDER=local_hf or openai_compatible in .env.")
+        elif cfg.LLM_PROVIDER == "openai_compatible" and not oc_configured:
+            hint = ("LLM_PROVIDER=openai_compatible but the endpoint is not "
+                    "configured — set OPENAI_COMPATIBLE_BASE_URL and "
+                    "OPENAI_COMPATIBLE_MODEL in .env.")
+        elif cfg.LLM_PROVIDER == "local_hf" and not local_cached:
+            hint = (f"Local model {cfg.LOCAL_LLM_MODEL} is not cached — run "
+                    "scripts/setup_offline.sh once while online "
+                    "(models land in MODEL_DIR, offline afterwards).")
+
+        return jsonify({
+            "success":  True,
+            "provider": cfg.LLM_PROVIDER,
+            "profile":  cfg.LOCAL_LLM_PROFILE,
+            "enabled":  {"chat": cfg.ENABLE_CHAT, "agent": cfg.ENABLE_AGENT,
+                         "rewrite": cfg.ENABLE_REWRITE},
+            "local": {
+                "model":          cfg.LOCAL_LLM_MODEL,
+                "device_config":  cfg.QWEN_DEVICE,
+                "cached":         local_cached,
+                "rewrite_loaded": rewrite.get("local"),
+                "rewrite_loading": rewrite.get("local_loading"),
+                "rewrite_device": rewrite.get("local_device"),
+                "rewrite_error":  rewrite.get("local_error"),
+                "chat_loaded":    chat.get("model_ready"),
+                "chat_loading":   chat.get("model_loading"),
+                "chat_model":     chat.get("model_name") or cfg.CHAT_MODEL,
+                "chat_error":     chat.get("model_error"),
+            },
+            "openai_compatible": {
+                "configured": oc_configured,
+                "base_url":   cfg.OPENAI_COMPATIBLE_BASE_URL,
+                "model":      cfg.OPENAI_COMPATIBLE_MODEL,
+                # NOTE: the API key is deliberately never returned.
+            },
+            "setup_hint": hint,
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # ── Document Management ───────────────────────────────────
 @app.route("/api/documents")

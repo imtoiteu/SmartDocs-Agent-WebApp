@@ -29,6 +29,19 @@ ensure_dirs
 BACKGROUND=0
 case "${1:-}" in -b|--background) BACKGROUND=1 ;; esac
 
+# This script manages the LOCAL MLX server only. On Windows/Linux the default
+# mode is "disabled" (lib.sh) — external_server / maas_api need no local server.
+if [ "$GLM_OCR_MODE" != "local_mlx" ]; then
+  err "GLM_OCR_MODE=$GLM_OCR_MODE — start_glm.sh only manages the LOCAL MLX server (GLM_OCR_MODE=local_mlx)."
+  err "GLM local MLX is only supported on macOS Apple Silicon. Use external_server, maas_api, or disable GLM."
+  err "(On Apple Silicon, set GLM_OCR_MODE=local_mlx in .env to run the server here.)"
+  exit 1
+fi
+if ! is_apple_silicon; then
+  warn "This host is not macOS Apple Silicon — the MLX server normally cannot run here"
+  warn "(mlx/mlx-vlm wheels are macOS/arm64 only); expect the steps below to fail."
+fi
+
 GLM_SERVE="$REPO_ROOT/tools/glm_serve.sh"
 if [ ! -x "$GLM_SERVE" ]; then
   err "tools/glm_serve.sh not found or not executable at $GLM_SERVE"

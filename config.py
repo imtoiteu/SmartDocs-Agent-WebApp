@@ -98,6 +98,14 @@ def _resolve_file(env_key: str, default: Path) -> Path:
     return p
 
 
+def _env_bool(env_key: str, default: bool) -> bool:
+    """Read a boolean env var (1/true/yes/on vs 0/false/no/off)."""
+    raw = os.environ.get(env_key, "")
+    if raw == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _resolve_model_dir() -> Path:
     """Resolve MODEL_DIR: env override → ./models → HuggingFace default cache."""
     raw = os.environ.get("MODEL_DIR", "")
@@ -407,13 +415,121 @@ class _Config:
         self.GLM_OCR_API_URL: str  = os.environ.get("GLM_OCR_API_URL", "http://localhost:8080")
         self.GLM_TIMEOUT:     int  = int(os.environ.get("GLM_TIMEOUT", "300"))
 
+        # ── GLM backend mode (cross-platform) ────────────────────────────────
+        # GLM-OCR (upstream github.com/zai-org/GLM-OCR) is NOT macOS-only — the
+        # model can be reached several ways. GLM_OCR_MODE selects the transport:
+        #   local_mlx       – local mlx_vlm server (macOS Apple Silicon ONLY;
+        #                     the scripts/start_glm.sh + tools/glm_serve.sh flow)
+        #   external_server – a GLM-OCR backend on another machine (vLLM /
+        #                     SGLang / mlx_vlm on a Mac / the glmocr SDK server)
+        #                     — see GLM_EXTERNAL_PROTOCOL below
+        #   maas_api        – Zhipu MaaS cloud API (glmocr --mode maas; needs an
+        #                     API key and internet)
+        #   ollama          – RESERVED: glmocr ships api_mode=ollama_generate but
+        #                     the integration is not yet verified in SmartDocs;
+        #                     the adapter refuses it with a clear message
+        #   disabled        – GLM OCR off (the other OCR engines are unaffected)
+        # Platform-aware default: local_mlx on macOS Apple Silicon (the verified
+        # baseline), disabled everywhere else — Windows/Linux must never assume a
+        # local MLX server exists. ENABLE_GLM=false stays the master off switch
+        # (same flag the scripts/ launchers honour) and forces disabled.
+        self.IS_APPLE_SILICON: bool = (
+            platform.system() == "Darwin" and platform.machine() == "arm64")
+        self.GLM_OCR_MODES = ("disabled", "local_mlx", "external_server",
+                              "maas_api", "ollama")
+        _glm_mode = os.environ.get(
+            "GLM_OCR_MODE",
+            "local_mlx" if self.IS_APPLE_SILICON else "disabled").strip().lower()
+        if not _env_bool("ENABLE_GLM", True):
+            _glm_mode = "disabled"
+        self.GLM_OCR_MODE: str = _glm_mode
+
+        # external_server protocol:
+        #   openai_compatible – POST <GLM_OCR_API_URL>/v1/chat/completions
+        #                       (vLLM / SGLang / mlx_vlm). Layout detection still
+        #                       runs locally in GLM-OCR/.venv-sdk (glmocr
+        #                       "selfhosted" mode with a remote ocr_api URL).
+        #                       This is the protocol SUPPORTED today.
+        #   sdk_server        – POST <GLM_OCR_API_URL>/glmocr/parse (the glmocr
+        #                       SDK server does layout+OCR remotely; no local GLM
+        #                       venv needed). NOT implemented yet — config is
+        #                       reserved; the adapter answers with a clear
+        #                       message (see docs/OCR_ENGINES.md).
+        self.GLM_EXTERNAL_PROTOCOL: str = os.environ.get(
+            "GLM_EXTERNAL_PROTOCOL", "openai_compatible").strip().lower()
+        # Model name sent in external OpenAI-compatible requests (vLLM/SGLang
+        # require the served model id; blank = the config.yaml/server default).
+        self.GLM_OCR_MODEL:      str  = os.environ.get("GLM_OCR_MODEL", "").strip()
+        self.GLM_OCR_API_KEY:    str  = os.environ.get("GLM_OCR_API_KEY", "").strip()
+        self.GLM_OCR_VERIFY_SSL: bool = _env_bool("GLM_OCR_VERIFY_SSL", False)
+
+        # maas_api (Zhipu cloud) — glmocr forwards requests; no local models and
+        # no local server needed. GLM_MAAS_API_KEY wins; ZHIPU_API_KEY (the
+        # SDK's own variable) is honoured as a fallback.
+        self.GLM_MAAS_API_URL: str = os.environ.get(
+            "GLM_MAAS_API_URL",
+            "https://open.bigmodel.cn/api/paas/v4/layout_parsing").strip()
+        self.GLM_MAAS_API_KEY: str = (os.environ.get("GLM_MAAS_API_KEY")
+                                      or os.environ.get("ZHIPU_API_KEY")
+                                      or "").strip()
+        self.GLM_MAAS_VERIFY_SSL: bool = _env_bool("GLM_MAAS_VERIFY_SSL", True)
+
+        # ollama (RESERVED — unverified; see GLM_OCR_MODE above)
+        self.GLM_OLLAMA_BASE_URL: str = os.environ.get(
+            "GLM_OLLAMA_BASE_URL", "http://localhost:11434").strip()
+        self.GLM_OLLAMA_MODEL:    str = os.environ.get("GLM_OLLAMA_MODEL", "").strip()
+
+        # ── LLM provider layer (chat / rewrite / agent) ──────────────────────
+        # LLM_PROVIDER selects where LLM completions come from:
+        #   local_hf          – local Hugging Face model (offline-first DEFAULT)
+        #   openai_compatible – any OpenAI-compatible /v1/chat/completions server
+        #                       (vLLM, llama.cpp server, LM Studio, …). Wired into
+        #                       the AGENT provider chain today; chat and AI-rewrite
+        #                       still use the local model (documented TODO).
+        #   disabled          – no LLM: chat/agent/AI-rewrite answer with a clear
+        #                       setup hint instead of loading anything.
+        self.LLM_PROVIDER: str = os.environ.get("LLM_PROVIDER", "local_hf").strip().lower()
+        # Default lightweight LOCAL model for ALL local LLM features.
+        # Qwen2.5-1.5B-Instruct is the default, not the only option:
+        # LOCAL_LLM_MODEL changes the default for chat + rewrite + agent at once;
+        # the per-feature QWEN_MODEL / CHAT_MODEL overrides below still win.
+        self.LOCAL_LLM_MODEL: str = os.environ.get(
+            "LOCAL_LLM_MODEL", "Qwen/Qwen2.5-1.5B-Instruct").strip()
+        # Optional device for the local LLM: auto | cpu | mps | cuda. Blank keeps
+        # the per-feature CPU-safe defaults below (MPS excluded by default —
+        # Apple driver crashes with tensors > 4GB on Qwen-class models).
+        self.LOCAL_LLM_DEVICE: str = os.environ.get("LOCAL_LLM_DEVICE", "").strip().lower()
+        # Sizing hint surfaced by /api/llm/status for the UI / desktop shell
+        # (low ≈ 1–2B CPU-safe default, medium ≈ 3–7B, high ≈ GPU-backed).
+        # Informational only — it does not change generation parameters yet.
+        self.LOCAL_LLM_PROFILE: str = os.environ.get("LOCAL_LLM_PROFILE", "low").strip().lower()
+        # OpenAI-compatible endpoint (used when LLM_PROVIDER=openai_compatible;
+        # also offered to the agent's fallback chain whenever configured):
+        self.OPENAI_COMPATIBLE_BASE_URL: str = os.environ.get(
+            "OPENAI_COMPATIBLE_BASE_URL", "").strip()
+        self.OPENAI_COMPATIBLE_API_KEY:  str = os.environ.get(
+            "OPENAI_COMPATIBLE_API_KEY", "").strip()
+        self.OPENAI_COMPATIBLE_MODEL:    str = os.environ.get(
+            "OPENAI_COMPATIBLE_MODEL", "").strip()
+        # Feature switches (default on; LLM_PROVIDER=disabled turns all three off
+        # unless a flag explicitly re-enables one). Gated routes answer with a
+        # clear "disabled" JSON message — never a crash.
+        _llm_on = self.LLM_PROVIDER != "disabled"
+        self.ENABLE_CHAT:    bool = _env_bool("ENABLE_CHAT",    _llm_on)
+        self.ENABLE_AGENT:   bool = _env_bool("ENABLE_AGENT",   _llm_on)
+        self.ENABLE_REWRITE: bool = _env_bool("ENABLE_REWRITE", _llm_on)
+
         # ── Qwen / AI Rewrite ────────────────────────────────────────────────
         # For Qwen on MPS: Apple's MPS driver crashes with tensors > 4GB.
         # When MPS is selected as the global device, Qwen still runs on CPU
-        # unless the user explicitly sets QWEN_DEVICE=mps.
-        _qwen_req         = os.environ.get("QWEN_DEVICE", "cpu" if self.DEVICE in ("mps", "cpu") else "auto")
+        # unless the user explicitly sets QWEN_DEVICE=mps (or LOCAL_LLM_DEVICE).
+        # Model/device defaults come from LOCAL_LLM_MODEL / LOCAL_LLM_DEVICE
+        # above; the per-feature vars keep overriding them (back-compat).
+        _qwen_req         = os.environ.get(
+            "QWEN_DEVICE",
+            self.LOCAL_LLM_DEVICE or ("cpu" if self.DEVICE in ("mps", "cpu") else "auto"))
         self.QWEN_DEVICE: str  = _select_device(_qwen_req)
-        self.QWEN_MODEL:  str  = os.environ.get("QWEN_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
+        self.QWEN_MODEL:  str  = os.environ.get("QWEN_MODEL", self.LOCAL_LLM_MODEL)
         self.QWEN_DTYPE         = _select_dtype(self.QWEN_DEVICE)
 
         # ── AI Chat ──────────────────────────────────────────────────────────
@@ -424,10 +540,12 @@ class _Config:
         # Fallback is the SAME 1.5B model until a different one is explicitly set,
         # so a missing 3B never makes chat report itself as broken.
         # Device   : same CPU-safe default as AI Rewrite
-        _chat_req              = os.environ.get("CHAT_DEVICE", "cpu" if self.DEVICE in ("mps", "cpu") else "auto")
+        _chat_req              = os.environ.get(
+            "CHAT_DEVICE",
+            self.LOCAL_LLM_DEVICE or ("cpu" if self.DEVICE in ("mps", "cpu") else "auto"))
         self.CHAT_DEVICE: str  = _select_device(_chat_req)
-        self.CHAT_MODEL:  str  = os.environ.get("CHAT_MODEL",  "Qwen/Qwen2.5-1.5B-Instruct")
-        self.FALLBACK_CHAT_MODEL: str = os.environ.get("FALLBACK_CHAT_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
+        self.CHAT_MODEL:  str  = os.environ.get("CHAT_MODEL",  self.LOCAL_LLM_MODEL)
+        self.FALLBACK_CHAT_MODEL: str = os.environ.get("FALLBACK_CHAT_MODEL", self.LOCAL_LLM_MODEL)
         self.CHAT_DTYPE        = _select_dtype(self.CHAT_DEVICE)
 
         # ── PhoBERT / Summarization ──────────────────────────────────────────

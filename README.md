@@ -66,8 +66,11 @@ scripts/start_glm.sh    # only the GLM OCR server  (Apple-Silicon / MLX only, op
 scripts/stop.sh         # stop background services (web + GLM)
 ```
 
-**Optional GLM OCR (Apple Silicon)** — uses the GLM-OCR vendored inside this repo
-(`GLM-OCR/`); no external path needed on a clean clone:
+**Optional GLM OCR — local MLX mode (Apple Silicon)** — uses the GLM-OCR vendored
+inside this repo (`GLM-OCR/`); no external path needed on a clean clone. This is
+`GLM_OCR_MODE=local_mlx`, the default on macOS Apple Silicon; on Windows/Linux
+GLM defaults to `disabled` and can instead point at an external GLM server or
+the MaaS cloud API (see the platform support matrix below and `.env.example`):
 
 ```bash
 scripts/setup.sh                       # main SmartDocs venv (keeps Pillow 10.2.0 for VietOCR)
@@ -164,7 +167,7 @@ run_windows.bat         # Windows
 |---|---|---|
 | Legacy PaddleOCR, PaddleOCR Modern | ✅ (models fetched on first online OCR run) | pre-cache via `scripts/setup_offline.sh` for offline |
 | VietOCR | — | `scripts/setup_offline.sh` — needs `vgg_transformer.pth` **and** `models/vietocr/config.yml` (both created by it) |
-| GLM-OCR engine | — | `scripts/setup_glm.sh --precache` (repo-local venvs + PP-DocLayoutV3 + GLM-OCR-bf16) + MLX server, **Apple Silicon only** |
+| GLM-OCR engine | — | local MLX (`scripts/setup_glm.sh --precache` + server) is **Apple Silicon only**; other OSes: `GLM_OCR_MODE=external_server` / `maas_api` (see matrix below) |
 | Correction (rule-based), extractive summarization, text reading | ✅ | — |
 | Translation (online) | ✅ (needs internet) | — |
 | Translation (offline / Argos) | — | `scripts/setup_offline.sh` (Argos packages in `MODEL_DIR`) |
@@ -180,19 +183,46 @@ Windows columns are *expected* from the codebase (CPU torch/paddle wheels,
 `run_windows.bat`, `platform_system` markers in `requirements.txt`) but not
 regularly tested — prefer **WSL** on Windows for the scripted flow.
 
+GLM OCR is **not** macOS-only: the *local MLX server* is, but `GLM_OCR_MODE`
+(see `.env.example`) also supports connecting to an **external GLM-OCR
+backend** (vLLM / SGLang / a Mac's MLX server over LAN) or the **Zhipu MaaS
+cloud API** from any OS.
+
 | Feature | macOS Apple Silicon | Linux | Windows | Notes |
 |---|---|---|---|---|
-| Web app (Flask + SPA) | ✅ | ✅ | ✅ expected | `scripts/*.sh` need Git Bash/WSL on Windows; native: `run_windows.bat` or manual venv |
+| Web app / backend (Flask + SPA) | ✅ | ✅ | ✅ expected | `scripts/*.sh` need Git Bash/WSL on Windows; native: `run_windows.bat` or manual venv |
+| Desktop wrapper (Tauri/Electron) | 🔜 plan | 🔜 plan | 🔜 plan | [docs/DESKTOP_MIGRATION_PLAN.md](docs/DESKTOP_MIGRATION_PLAN.md) — plan only, not implemented |
 | PaddleOCR (Legacy + Modern) | ✅ | ✅ | ✅ expected | models auto-cache to `~/.paddlex/official_models/` on first online OCR run |
 | VietOCR | ✅ | ✅ | ✅ expected | needs `scripts/setup_offline.sh` (weights + `config.yml`) |
-| GLM OCR — **local MLX server** | ✅ | ❌ | ❌ | `mlx`/`mlx-vlm` wheels are **macOS/arm64 only**; set `ENABLE_GLM=false` elsewhere (or leave it — `start.sh` just warns and continues) |
-| GLM OCR — external server | ✅ | ⚠️ unverified | ⚠️ unverified | point `GLM_OCR_API_URL` at a running GLM server; the `glmocr` CLI venv (`GLM-OCR/.venv-sdk`, plain torch) is still needed locally |
 | Argos offline translation | ✅ | ✅ | ✅ expected | packages in `models/argos/packages/` via `scripts/setup_offline.sh` |
-| Qwen 2.5 1.5B chat / AI rewrite / agent | ✅ (CPU) | ✅ (CPU / CUDA) | ✅ expected (CPU / CUDA) | the default local LLM; larger models opt-in via `.env` |
+| Qwen local HF chat / AI rewrite / agent | ✅ (CPU) | ✅ (CPU / CUDA) | ✅ expected (CPU / CUDA) | `LOCAL_LLM_MODEL` default Qwen2.5-1.5B-Instruct; larger models opt-in via `.env` |
+| OpenAI-compatible LLM endpoint | ✅ | ✅ | ✅ expected | `LLM_PROVIDER=openai_compatible` + `OPENAI_COMPATIBLE_*` (vLLM/llama.cpp/LM Studio); wired into the agent chain today |
+| GLM OCR — **local MLX server** (`local_mlx`) | ✅ | ❌ | ❌ | `mlx`/`mlx-vlm` wheels are **macOS/arm64 only**; on other OSes the default is `GLM_OCR_MODE=disabled` and the app just runs without GLM |
+| GLM OCR — external server (`external_server`) | ✅ | ⚠️ unverified | ⚠️ unverified | `openai_compatible` protocol; the `glmocr` CLI venv (`GLM-OCR/.venv-sdk`, plain torch) + layout model are still needed locally |
+| GLM OCR — served via **vLLM** | n/a (server side) | ⚠️ unverified (NVIDIA GPU) | ⚠️ via WSL, unverified | deploy GLM-OCR separately with vLLM, then SmartDocs connects as a client (`external_server`) |
+| GLM OCR — served via **SGLang** | n/a (server side) | ⚠️ unverified (NVIDIA GPU) | ⚠️ via WSL, unverified | same client model as vLLM (`external_server`) |
+| GLM OCR — MaaS / cloud API (`maas_api`) | ⚠️ unverified | ⚠️ unverified | ⚠️ unverified | Zhipu `layout_parsing` API; needs `GLM_MAAS_API_KEY` + internet; implemented via `glmocr --mode maas`, not yet tested end-to-end |
+| GLM OCR — Ollama (`ollama`) | ❌ reserved | ❌ reserved | ❌ reserved | **not verified** — the adapter refuses the mode with a clear message until the integration is tested |
 | Embeddings / RAG | ✅ | ✅ | ✅ expected | char-hash retrieval fallback if the model is missing |
-| Desktop packaging (Electron/Tauri) | 🔜 plan | 🔜 plan | 🔜 plan | [docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md) is a **plan**, not implemented |
+| Offline model setup (`setup_offline.sh` / `--precache`) | ✅ | ✅ | ✅ via Git Bash/WSL expected | one-time online priming into `MODEL_DIR`; fully offline afterwards |
+
+**Per-OS guidance:**
+
+- **macOS Apple Silicon** — the fully-verified baseline. Local GLM MLX **is
+  supported**: `scripts/setup_glm.sh --precache` + `scripts/start_glm.sh -b`
+  (`GLM_OCR_MODE=local_mlx` is the default here).
+- **Linux** — do **not** use local MLX (no wheels; the default is
+  `GLM_OCR_MODE=disabled`). Use PaddleOCR/VietOCR locally for OCR. For GLM,
+  deploy GLM-OCR separately on an NVIDIA-GPU box via **vLLM or SGLang** and
+  connect SmartDocs as a client: `GLM_OCR_MODE=external_server` +
+  `GLM_OCR_API_URL=http://<server>:<port>`.
+- **Windows** — do **not** use local MLX. Use PaddleOCR/VietOCR locally;
+  connect to a GLM-OCR server over LAN (`external_server`) or, when internet
+  and an API key are acceptable, use `maas_api`. Running the GLM server itself
+  under WSL with a GPU is an advanced, **unverified** route.
 
 Full instructions: **[docs/INSTALLATION.md](docs/INSTALLATION.md)** (per-OS setup).
+GLM backend modes in depth: **[docs/OCR_ENGINES.md](docs/OCR_ENGINES.md)**.
 Clean-clone walkthrough: **[docs/RUN_EN.md](docs/RUN_EN.md)** · **[docs/RUN_VI.md](docs/RUN_VI.md)**.
 Production deployment: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 

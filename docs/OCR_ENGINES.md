@@ -163,31 +163,84 @@ VietOCR are unaffected (no unwarping, boxes align as before).
 
 ---
 
-## 9. GLM OCR — local model server (required)
+## 9. GLM OCR — backend modes (cross-platform)
 
 GLM OCR is a **GLM-V vision OCR model** (PP-DocLayoutV3 for layout + a 0.9B GLM decoder for
-recognition). The model is served **locally** by MLX on Apple Silicon; SmartDocs is a *client*
-of that server (it never imports GLM-OCR — incompatible deps — but shells out to its CLI in a
-separate venv). This is fully offline once models are cached; **no cloud / no API key**.
+recognition; upstream: <https://github.com/zai-org/GLM-OCR>). SmartDocs is a *client* of a
+GLM backend (it never imports GLM-OCR — incompatible deps — but shells out to its CLI in a
+separate venv). **`GLM_OCR_MODE`** selects the backend; the platform-aware default is
+`local_mlx` on macOS Apple Silicon and `disabled` on Windows/Linux.
 
+| `GLM_OCR_MODE` | What serves the model | Works on | Status |
+|---|---|---|---|
+| `local_mlx` | `mlx_vlm.server` on this machine (`scripts/start_glm.sh`) | macOS Apple Silicon **only** | ✅ verified |
+| `external_server` | vLLM / SGLang / a Mac's MLX server on another machine | any OS (client side) | ⚠️ implemented, unverified |
+| `maas_api` | Zhipu MaaS cloud (`glmocr --mode maas`; needs `GLM_MAAS_API_KEY`) | any OS, internet | ⚠️ implemented, unverified |
+| `ollama` | — | — | ❌ **reserved, not verified**; the adapter refuses it |
+| `disabled` | — | any OS | ✅ (GLM off; other engines unaffected) |
+
+On an unsupported combination the engine answers with a clear message (e.g. *"GLM local MLX
+is only supported on macOS Apple Silicon. Use external_server, maas_api, or disable GLM."*)
+— the app itself never fails because GLM is unavailable.
+
+### 9a. `local_mlx` — local model server (Apple Silicon)
+
+Fully offline once models are cached; **no cloud / no API key**.
 **Start the model server once** (it holds the model resident between requests):
 
 ```bash
-tools/glm_serve.sh            # serves mlx-community/GLM-OCR-bf16 on :8080
+scripts/start_glm.sh -b       # serves mlx-community/GLM-OCR-bf16 on :8080 (wraps tools/glm_serve.sh)
 ```
 
 Then pick **🧠 GLM OCR (Structured)** in the Engine dropdown and Run OCR. The adapter
-health-checks `:8080` first and shows a clear error toast if the server is down.
+health-checks `:8080` first and shows a clear error toast if the server is down (or a
+*"still loading … retry"* note during a cold start).
 
-**Config** (env, all optional — sensible defaults point at `GLM-OCR/GLM-OCR`):
-`GLM_ROOT`, `GLM_SDK_PYTHON`, `GLM_MLX_PYTHON`, `GLM_CONFIG_YAML`, `GLM_OCR_API_URL`
-(default `http://localhost:8080`), `GLM_TIMEOUT` (default 300 s).
+**Config** (env, all optional — sensible defaults point at the vendored `GLM-OCR/`):
+`GLM_OCR_DIR`/`GLM_ROOT`, `GLM_SDK_PYTHON`, `GLM_MLX_PYTHON`, `GLM_CONFIG_YAML`,
+`GLM_OCR_API_URL` (default `http://localhost:8080`), `GLM_TIMEOUT` (default 300 s).
 
 **How it runs**: `GLM_SDK_PYTHON -m glmocr.cli parse <img> --config mlx_config.yaml --mode
 selfhosted --output <tmp>` with `HF_HUB_OFFLINE=1`. SmartDocs reads back `X.json` (regions,
 coords normalised **0–1000** → scaled to pixels for the overlay), `X.md`, `layout_vis/` and
 `imgs/`, and attaches `markdown / tables_html / layout_blocks / images (base64) / raw_json`.
 `layout_native=True` so the geometric reconstruction is skipped.
+
+### 9b. `external_server` — GLM served on another machine
+
+Two protocol styles exist conceptually; **they do not share a request format**:
+
+1. **`GLM_EXTERNAL_PROTOCOL=openai_compatible`** (SUPPORTED) —
+   `http://<server>:8080/v1/chat/completions`, i.e. a vLLM / SGLang / mlx_vlm server
+   hosting the GLM-OCR model. SmartDocs runs the same `glmocr --mode selfhosted` pipeline
+   as `local_mlx` but points `pipeline.ocr_api.api_url` at the remote endpoint
+   (`GLM_OCR_API_URL`; a bare base URL gets `/v1/chat/completions` appended). **Layout
+   detection still runs locally** — `GLM-OCR/.venv-sdk` and the layout-model cache
+   (`setup_glm.sh --precache-layout`) are required on the client; `.venv-mlx` is **not**.
+   Extra knobs: `GLM_OCR_MODEL` (served model id — vLLM/SGLang require it),
+   `GLM_OCR_API_KEY`, `GLM_OCR_VERIFY_SSL`.
+2. **`GLM_EXTERNAL_PROTOCOL=sdk_server`** (RESERVED, not implemented) —
+   `http://<server>:5002/glmocr/parse`, the glmocr SDK server (`GLM-OCR/glmocr/server.py`)
+   which does layout **and** OCR remotely (no local GLM venv needed at all). The config
+   structure is reserved; the adapter currently answers with a clear not-implemented
+   message. TODO marker: `TODO(glm-sdk-server)` in `services/ocr_engines/glm_adapter.py`.
+
+Server-side deployment (vLLM/SGLang on an NVIDIA-GPU Linux box) follows the upstream
+GLM-OCR README — SmartDocs only needs the resulting URL.
+
+### 9c. `maas_api` — Zhipu cloud API
+
+`glmocr --mode maas` forwards the document to `GLM_MAAS_API_URL` (default: Zhipu's
+`layout_parsing` endpoint) with `GLM_MAAS_API_KEY`/`ZHIPU_API_KEY`. No local models, no
+local server — but internet and a paid key at OCR time. Implemented via the SDK's native
+MaaS mode; not yet verified end-to-end from SmartDocs.
+
+### 9d. `ollama` — reserved
+
+The glmocr SDK has an `api_mode: ollama_generate` hook, but the integration is **not
+verified in SmartDocs** — the mode is refused with a clear message rather than promised.
+TODO marker: `TODO(glm-ollama)` in `services/ocr_engines/glm_adapter.py`
+(`GLM_OLLAMA_BASE_URL` / `GLM_OLLAMA_MODEL` are reserved for it).
 
 ---
 

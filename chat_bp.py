@@ -18,6 +18,7 @@ import sys, logging
 logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent))
+from config import cfg
 from services import chat_service
 from models import (db, Document, ChatConversation,
                     get_or_create_conversation, add_message)
@@ -74,7 +75,8 @@ def chat_status():
     try:
         status = chat_service.get_chat_status()
         emb_mode = chat_service._embedding_engine.mode
-        return jsonify({"success": True, "embedding_mode": emb_mode, **status})
+        return jsonify({"success": True, "enabled": cfg.ENABLE_CHAT,
+                        "embedding_mode": emb_mode, **status})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -149,6 +151,14 @@ def chat_send():
     intentionally not offered; any "doc_all" request folds to "doc_current" so old
     threads reopen gracefully. The Agent still does cross-document retrieval via tools.
     """
+    # Feature switch (cross-platform): a clear JSON answer, never a crash.
+    if not cfg.ENABLE_CHAT:
+        return jsonify({
+            "success": False, "disabled": True,
+            "error": "AI Chat is disabled on this installation "
+                     "(ENABLE_CHAT=false or LLM_PROVIDER=disabled in .env).",
+        }), 503
+
     data            = request.get_json(force=True)
     query           = (data.get("query") or "").strip()
     file_id         = (data.get("file_id") or "").strip() or None

@@ -103,6 +103,31 @@ normalize_env() {
     *)              ENABLE_GLM="false" ;;
   esac
   export ENABLE_GLM
+
+  # GLM backend mode (cross-platform; mirrors config.py):
+  #   local_mlx | external_server | maas_api | ollama | disabled
+  # Platform-aware default: local_mlx ONLY on macOS Apple Silicon (the verified
+  # baseline); disabled everywhere else — Windows/Linux never assume a local
+  # MLX server exists. ENABLE_GLM=false stays the master off switch.
+  if [ -z "${GLM_OCR_MODE:-}" ]; then
+    if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+      GLM_OCR_MODE="local_mlx"
+    else
+      GLM_OCR_MODE="disabled"
+    fi
+  fi
+  GLM_OCR_MODE="$(printf '%s' "$GLM_OCR_MODE" | tr '[:upper:]' '[:lower:]')"
+  if [ "$ENABLE_GLM" = "false" ]; then
+    GLM_OCR_MODE="disabled"
+  fi
+  # External-server protocol (openai_compatible is the supported one today).
+  GLM_EXTERNAL_PROTOCOL="${GLM_EXTERNAL_PROTOCOL:-openai_compatible}"
+  export GLM_OCR_MODE GLM_EXTERNAL_PROTOCOL
+}
+
+# True (0) when this host can run the local MLX server at all.
+is_apple_silicon() {
+  [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]
 }
 
 # --- Project-local HuggingFace hub cache -------------------------------------
