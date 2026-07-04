@@ -39,7 +39,8 @@ from agent.knowledge import get_knowledge_registry
 from agent.memory import ConversationMemory
 from agent.results import (collect_doc_outputs, doc_artifact_destinations,
                            citation_destinations, source_document_destination,
-                           chat_destination, dedupe_destinations)
+                           chat_destination, dedupe_destinations,
+                           should_persist_artifact, AGENT_ARTIFACT_META_PREFIX)
 from agent.ocr_routing import select_ocr_engine
 
 logger = logging.getLogger(__name__)
@@ -110,21 +111,42 @@ def _agent_skill_context() -> SkillContext:
                         provider=get_default_provider())
 
 
-def _persist_doc_outputs(doc, summary=None, translation=None, to_lang="") -> list:
+def _may_write_artifact(doc_id: int, kind: str, source_truncated: bool) -> bool:
+    """Apply the non-overwrite policy (agent.results.should_persist_artifact) to
+    the document's CURRENT artifact of ``kind``: never clobber a module-produced
+    artifact, and a truncated-context run may only fill a gap."""
+    art = DocumentArtifact.query.filter_by(document_id=doc_id, kind=kind).first()
+    return should_persist_artifact(art is not None,
+                                   art.meta if art is not None else None,
+                                   source_truncated)
+
+
+def _persist_doc_outputs(doc, summary=None, translation=None, to_lang="",
+                         source_truncated=False) -> list:
     """Persist an agent's NEW derived outputs (summary / translation) as document
     artifacts via ``models.save_artifact`` (upsert by document+kind), so agent work
     is durable and shows up in the normal document viewer (Phase 8 / 13).
+
+    Overwrite-guarded: a summary/translation the user made via the Summarize /
+    Translate modules (complete, full-text outputs) is never replaced, and a run
+    whose document context was truncated (``source_truncated``) never overwrites
+    anything — the agent's answer still carries its output; it just isn't allowed
+    to clobber a durable artifact with a partial one.
 
     Deliberately does NOT touch the canonical 'ocr' text artifact — that stays the
     authoritative RAG/chat/translate/summary input and must not be clobbered by the
     agent path. Best-effort; returns the kinds written. ``doc`` is already
     ownership-checked by the caller.
     """
+    trunc_tag = ";truncated=1" if source_truncated else ""
     written = []
-    if summary and save_artifact(doc.id, "summary", summary, meta="source=agent"):
+    if (summary and _may_write_artifact(doc.id, "summary", source_truncated)
+            and save_artifact(doc.id, "summary", summary,
+                              meta=AGENT_ARTIFACT_META_PREFIX + trunc_tag)):
         written.append("summary")
-    if translation and save_artifact(doc.id, "translation", translation,
-                                     meta=f"source=agent;to={to_lang}"):
+    if (translation and _may_write_artifact(doc.id, "translation", source_truncated)
+            and save_artifact(doc.id, "translation", translation,
+                              meta=f"{AGENT_ARTIFACT_META_PREFIX};to={to_lang}" + trunc_tag)):
         written.append("translation")
     return written
 
@@ -238,13 +260,21 @@ def _source_doc_kind(doc):
 # without the user ever typing a file_id. Capped to keep prompts (and Groq TPM) sane.
 _DOC_CONTEXT_MAX_CHARS = 6000
 
+# Newest session turns fed back to the agent as context. Matches the Chat
+# feature's history window (chat_service._MAX_HISTORY_MESSAGES); older turns stay
+# stored and visible in the transcript — they just don't ride along in the prompt.
+_MAX_HISTORY_TURNS = 12
+
 
 def _document_context_message(doc):
-    """A synthetic user turn carrying the scoped document's text, or None if it has
-    no text yet. Lets the agent operate on the attached document by reference."""
+    """A synthetic user turn carrying the scoped document's text, plus whether the
+    text had to be truncated to fit — ``(message, truncated)``, or ``(None, False)``
+    when the document has no text yet. The truncated flag feeds the artifact
+    non-overwrite policy: a partial-context output must never replace a complete
+    artifact. Lets the agent operate on the attached document by reference."""
     text = _doc_text(doc)
     if not text:
-        return None
+        return None, False
     truncated = len(text) > _DOC_CONTEXT_MAX_CHARS
     if truncated:
         text = text[:_DOC_CONTEXT_MAX_CHARS] + "\n…(truncated)"
@@ -253,10 +283,11 @@ def _document_context_message(doc):
             f'content to summarize, translate, correct or answer about'
             + (" (note: the text was truncated)." if truncated else ".")
             + f"\n\n--- BEGIN DOCUMENT ---\n{text}\n--- END DOCUMENT ---")
-    return {"role": "user", "content": note}
+    return {"role": "user", "content": note}, truncated
 
 
-def _run_result_destinations(doc, message: str, result) -> list:
+def _run_result_destinations(doc, message: str, result,
+                             source_truncated: bool = False) -> list:
     """Build the 'View Result' destinations for a finished agent run (Phase 13/14).
 
     Derived entirely from what the run produced/persisted — the LLM never chooses a
@@ -272,7 +303,8 @@ def _run_result_destinations(doc, message: str, result) -> list:
         outs = collect_doc_outputs(result)
         written = _persist_doc_outputs(doc, summary=outs["summary"],
                                        translation=outs["translation"],
-                                       to_lang=outs["to_lang"])
+                                       to_lang=outs["to_lang"],
+                                       source_truncated=source_truncated)
         # Surface the source document in the existing viewer when it has any backing
         # text, labelled by what actually backs it — a real OCR run vs. plain
         # extracted text (so a DOCX/TXT is "Extracted Text", never "OCR").
@@ -555,16 +587,20 @@ def agent_run():
 
     memory = ConversationMemory()
     # Prefer stored history; fall back to client-supplied history only on a brand
-    # new session (backward-compatible with the prior stateless contract).
-    history = memory.load_history(conv.id) if conv else []
+    # new session (backward-compatible with the prior stateless contract). The
+    # window is BOUNDED — a long-lived session must not replay itself whole into
+    # every prompt (local models truncate; cloud models bill/ratelimit by token).
+    history = memory.load_history(conv.id, limit=_MAX_HISTORY_TURNS) if conv else []
     if not history and client_history:
-        history = client_history
+        history = client_history[-_MAX_HISTORY_TURNS:]
 
     # Attach the scoped document's text (ephemeral, not persisted to memory) right
     # before the user's request, so the agent can act on "this document" via the
-    # existing text tools — the user never types a file_id.
+    # existing text tools — the user never types a file_id. doc_ctx_truncated
+    # gates artifact persistence: a partial context must not clobber artifacts.
+    doc_ctx_truncated = False
     if doc is not None:
-        ctx_msg = _document_context_message(doc)
+        ctx_msg, doc_ctx_truncated = _document_context_message(doc)
         if ctx_msg:
             history = list(history) + [ctx_msg]
 
@@ -586,7 +622,9 @@ def agent_run():
                      max_steps=max_steps,
                      skills=_safe_skill_registry(),
                      skill_context=_agent_skill_context(),
-                     enable_planning=True)
+                     enable_planning=True,
+                     time_budget_s=(cfg.AGENT_MAX_SECONDS
+                                    if cfg.AGENT_MAX_SECONDS > 0 else None))
     try:
         result = core.run(message, history=history, allowed_file_ids=allowed_ids)
     except Exception as exc:  # noqa: BLE001
@@ -607,7 +645,8 @@ def agent_run():
     # (best-effort; never breaks the response). Done before persisting the turn so the
     # destinations can be stored as the assistant turn's artifact references.
     try:
-        results = _run_result_destinations(doc, message, result)
+        results = _run_result_destinations(doc, message, result,
+                                           source_truncated=doc_ctx_truncated)
     except Exception:                          # destination building is non-critical
         logger.warning("[AgentBP] building run results failed", exc_info=True)
         results = []

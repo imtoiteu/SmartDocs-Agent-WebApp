@@ -22,7 +22,7 @@ except ImportError:
 
 from agent.core import (  # noqa: E402
     GeminiProvider, GroqProvider, LocalQwenProvider, FallbackProvider, LLMProvider,
-    get_default_provider,
+    OpenAICompatibleProvider, get_default_provider, fit_messages_to_char_budget,
 )
 
 
@@ -218,6 +218,80 @@ def test_fallback_uses_primary_when_ok():
     p = FallbackProvider([primary, fb])
     assert p.complete([{"role": "user", "content": "q"}]) == "from-primary"
     assert p.name == "gemini:x" and fb.calls == 0
+
+
+# ── char-budget message fitting (bounded local context; review P2) ───────────
+def _msgs(*contents, system="SYS"):
+    out = [{"role": "system", "content": system}]
+    for i, c in enumerate(contents):
+        out.append({"role": "user" if i % 2 == 0 else "assistant", "content": c})
+    return out
+
+
+def test_fit_untouched_when_within_budget():
+    msgs = _msgs("aaa", "bbb", "ccc")
+    assert fit_messages_to_char_budget(msgs, 1000) == msgs
+
+
+def test_fit_drops_oldest_keeps_system_and_newest():
+    # system(3) + newest(5) fit; adding "old-2"(5) fits; "old-1"(5) doesn't.
+    msgs = _msgs("old-1", "old-2", "new-1", system="SYS")
+    fitted = fit_messages_to_char_budget(msgs, 3 + 5 + 5)
+    assert [m["content"] for m in fitted] == ["SYS", "old-2", "new-1"]
+
+
+def test_fit_never_drops_final_message():
+    msgs = _msgs("history " * 100, "the actual question")
+    fitted = fit_messages_to_char_budget(msgs, 3 + len("the actual question"))
+    assert fitted[-1]["content"] == "the actual question"
+    assert [m["role"] for m in fitted] == ["system", "assistant"]
+
+
+def test_fit_clips_oversize_final_message_tail_with_marker():
+    msgs = _msgs("x" * 500)
+    fitted = fit_messages_to_char_budget(msgs, 3 + 100)
+    tail = fitted[-1]["content"]
+    assert tail.endswith("…(truncated)") and len(tail) <= 100
+    assert fitted[0]["content"] == "SYS"                # system always kept
+
+
+def test_fit_no_gaps_stops_at_first_nonfitting_message():
+    # An oversize middle message must not be skipped over (no holes in history):
+    # fitting stops there even though an older, smaller message would fit.
+    msgs = _msgs("tiny", "X" * 300, "new", system="S")
+    fitted = fit_messages_to_char_budget(msgs, 1 + 3 + 50)
+    assert [m["content"] for m in fitted] == ["S", "new"]
+
+
+def test_fit_handles_no_system_and_empty():
+    assert fit_messages_to_char_budget([], 100) == []
+    msgs = [{"role": "user", "content": "q1"}, {"role": "user", "content": "q2"}]
+    assert fit_messages_to_char_budget(msgs, 100) == msgs
+    only_sys = [{"role": "system", "content": "S"}]
+    assert fit_messages_to_char_budget(only_sys, 100) == only_sys
+
+
+def test_fit_does_not_mutate_input():
+    msgs = _msgs("x" * 500)
+    snapshot = [dict(m) for m in msgs]
+    fit_messages_to_char_budget(msgs, 50)
+    assert msgs == snapshot
+
+
+# ── OpenAI-compatible provider (exported via agent.core) ─────────────────────
+def test_openai_compatible_url_composition_and_name():
+    P = OpenAICompatibleProvider
+    assert P("http://h:8000", "m").url == "http://h:8000/v1/chat/completions"
+    assert P("http://h:8000/v1", "m").url == "http://h:8000/v1/chat/completions"
+    assert (P("http://h:8000/v1/chat/completions", "m").url
+            == "http://h:8000/v1/chat/completions")
+    assert P("http://h", "my-model").name == "openai-compatible:my-model"
+    try:
+        P("", "m")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("empty base_url must raise")
 
 
 def test_fallback_degrades_on_primary_error_and_sticks():

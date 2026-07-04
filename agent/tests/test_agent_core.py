@@ -31,10 +31,12 @@ class FakeProvider(LLMProvider):
 
     def __init__(self, responses):
         self.responses = list(responses)
-        self.calls = []  # list of role-sequences, one per complete()
+        self.calls = []          # list of role-sequences, one per complete()
+        self.calls_content = []  # the last message's content, one per complete()
 
     def complete(self, messages, *, max_tokens=512, temperature=0.2):
         self.calls.append([m["role"] for m in messages])
+        self.calls_content.append(messages[-1].get("content") or "")
         return self.responses.pop(0) if self.responses else '{"final": "(exhausted)"}'
 
 
@@ -165,8 +167,71 @@ def test_result_to_dict_shape():
     core = AgentCore(registry=_registry(EchoTool()), provider=fp, max_steps=3)
     d = core.run("q").to_dict()
     assert d["answer"] == "ok" and d["completed"] is True
+    assert d["timed_out"] is False
     assert d["tool_calls"] == ["echo"]
     assert d["steps"][0]["tool"] == "echo"
+
+
+# ── wall-clock time budget (review P5) ───────────────────────────────────────
+class SlowProvider(FakeProvider):
+    """FakeProvider that burns wall-clock time on each completion."""
+
+    def __init__(self, responses, delay_s):
+        super().__init__(responses)
+        self.delay_s = delay_s
+
+    def complete(self, messages, *, max_tokens=512, temperature=0.2):
+        import time
+        time.sleep(self.delay_s)
+        return super().complete(messages, max_tokens=max_tokens,
+                                temperature=temperature)
+
+
+def test_time_budget_stops_loop_and_synthesizes():
+    # Each step takes ~50ms; the budget allows roughly one. The run must stop
+    # early, do ONE synthesis pass, and be marked timed_out + incomplete.
+    fp = SlowProvider(
+        ['{"tool": "echo", "arguments": {}}'] * 10 + ["synthesized under time"],
+        delay_s=0.05)
+    core = AgentCore(registry=_registry(EchoTool()), provider=fp,
+                     max_steps=6, time_budget_s=0.06)
+    res = core.run("q")
+    assert res.timed_out is True and res.completed is False
+    assert res.answer  # a real answer was still produced
+    assert len(res.tool_calls()) < 6                # stopped before max_steps
+    assert res.steps[-1].kind == "final"
+    assert res.to_dict()["timed_out"] is True
+
+
+def test_time_budget_expired_before_first_step_still_answers():
+    fp = FakeProvider(["best effort answer"])
+    core = AgentCore(registry=_registry(EchoTool()), provider=fp,
+                     max_steps=3, time_budget_s=0.0)   # already expired
+    res = core.run("q")
+    assert res.timed_out is True and res.completed is False
+    assert res.answer == "best effort answer"
+    assert res.tool_calls() == []                   # no tool was started
+    # The synthesis instruction says time ran out.
+    assert "Time is up" in fp.calls_content[-1]
+
+
+def test_no_time_budget_keeps_old_contract():
+    fp = FakeProvider(['{"tool": "echo", "arguments": {}}', '{"final": "ok"}'])
+    core = AgentCore(registry=_registry(EchoTool()), provider=fp, max_steps=3)
+    res = core.run("q")
+    assert res.timed_out is False and res.completed is True
+
+
+# ── retrieval grounding instruction (review P6) ──────────────────────────────
+def test_system_prompt_requires_grounding_or_disclosure():
+    core = AgentCore(registry=_registry(EchoTool()),
+                     provider=FakeProvider([]), max_steps=1)
+    sp = core._system_prompt()
+    assert "Grounding" in sp
+    assert "retrieve evidence FIRST" in sp
+    assert "say so explicitly" in sp
+    # The instruction names the retrieval tools it expects the agent to use.
+    assert "knowledge_search" in sp and "chat" in sp
 
 
 # ── standalone runner (used when pytest is unavailable) ──────────────────────────

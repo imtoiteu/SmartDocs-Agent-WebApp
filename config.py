@@ -519,6 +519,16 @@ class _Config:
         self.ENABLE_AGENT:   bool = _env_bool("ENABLE_AGENT",   _llm_on)
         self.ENABLE_REWRITE: bool = _env_bool("ENABLE_REWRITE", _llm_on)
 
+        # Wall-clock budget for one agent run (seconds). Past it the agent stops
+        # calling tools and synthesizes an answer from the observations it has —
+        # a slow local model can no longer hang a request indefinitely.
+        # 0 (or negative) disables the budget.
+        try:
+            self.AGENT_MAX_SECONDS: float = float(
+                os.environ.get("AGENT_MAX_SECONDS", "180"))
+        except ValueError:
+            self.AGENT_MAX_SECONDS = 180.0
+
         # ── Qwen / AI Rewrite ────────────────────────────────────────────────
         # For Qwen on MPS: Apple's MPS driver crashes with tensors > 4GB.
         # When MPS is selected as the global device, Qwen still runs on CPU

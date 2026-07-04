@@ -113,6 +113,10 @@
         </div>
         <div class="transcript" id="transcript"></div>
 
+        <!-- LLM / agent availability, filled from /api/llm/status on load so a
+             disabled agent or missing model is visible BEFORE the first run. -->
+        <div id="llm-status" class="muted small" style="margin-bottom:6px"></div>
+
         <label for="msg">Your request</label>
         <textarea id="msg" placeholder="e.g. Summarize and translate this document into Vietnamese, or: search my documents for…"></textarea>
 

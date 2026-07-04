@@ -10,9 +10,11 @@ from .provider import (
     LocalQwenProvider,
     GeminiProvider,
     GroqProvider,
+    OpenAICompatibleProvider,
     FallbackProvider,
     Message,
     get_default_provider,
+    fit_messages_to_char_budget,
 )
 from .agent import AgentCore, AgentResult, AgentStep
 
@@ -21,9 +23,11 @@ __all__ = [
     "LocalQwenProvider",
     "GeminiProvider",
     "GroqProvider",
+    "OpenAICompatibleProvider",
     "FallbackProvider",
     "Message",
     "get_default_provider",
+    "fit_messages_to_char_budget",
     "AgentCore",
     "AgentResult",
     "AgentStep",

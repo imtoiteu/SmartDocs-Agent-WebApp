@@ -71,6 +71,20 @@ def test_subclassing_contract():
     assert ConversationMemory().name == "agent-db"
 
 
+def test_load_history_limit_keeps_newest_turns():
+    # Bounded context (review P3): limit returns only the NEWEST turns, still in
+    # chronological order; None keeps everything (the prior contract).
+    m = InMemoryAgentMemory()
+    for i in range(6):
+        m.append_turn(1, "user" if i % 2 == 0 else "assistant", f"t{i}")
+    assert [t["content"] for t in m.load_history(1, limit=2)] == ["t4", "t5"]
+    assert [t["content"] for t in m.load_history(1, limit=100)] == [
+        f"t{i}" for i in range(6)]
+    assert [t["content"] for t in m.load_history(1)] == [f"t{i}" for i in range(6)]
+    assert m.load_history(1, limit=0) == []
+    assert m.load_history(None, limit=2) == []          # None-guard unaffected
+
+
 if __name__ == "__main__":
     import traceback
     tests = [(n, f) for n, f in sorted(globals().items())

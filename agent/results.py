@@ -30,6 +30,33 @@ from typing import Any, Dict, List, Optional
 _MODULE_BY_KIND = {"summary": "summarize", "translation": "translate"}
 _LABEL_BY_KIND = {"summary": "Summary", "translation": "Translation"}
 
+# Meta prefix the agent stamps on artifacts it persists (agent_bp). The
+# Summarize/Translate modules write different metas ("mode=…", "to=…"), so this
+# prefix is what lets the non-overwrite policy tell agent output apart.
+AGENT_ARTIFACT_META_PREFIX = "source=agent"
+
+
+def should_persist_artifact(artifact_exists: bool, existing_meta,
+                            source_truncated: bool = False) -> bool:
+    """Whether the agent may write (create or overwrite) a summary/translation
+    artifact for a document.
+
+    Policy: the agent must never clobber an artifact it did not produce — the
+    Summarize/Translate modules generate complete outputs from the full text,
+    while the agent works from a capped document context. And a run whose
+    context WAS truncated may only fill a gap, never replace anything (not even
+    the agent's own earlier, possibly complete, output).
+
+    ``artifact_exists`` / ``existing_meta`` describe the current artifact of
+    that kind (meta may legitimately be None on an existing artifact, which is
+    why existence is a separate flag).
+    """
+    if not artifact_exists:
+        return True
+    if source_truncated:
+        return False
+    return str(existing_meta or "").startswith(AGENT_ARTIFACT_META_PREFIX)
+
 
 def collect_doc_outputs(result: Any) -> Dict[str, Any]:
     """Scan an ``AgentResult``'s step observations for derived text a document

@@ -22,6 +22,7 @@ from agent.core.agent import AgentResult, AgentStep  # noqa: E402
 from agent.results import (  # noqa: E402
     collect_doc_outputs, doc_artifact_destinations, citation_destinations,
     source_document_destination, chat_destination, dedupe_destinations,
+    should_persist_artifact, AGENT_ARTIFACT_META_PREFIX,
 )
 
 
@@ -120,6 +121,35 @@ def test_chat_destination():
     assert d == {"module": "chat", "kind": "conversation", "conversation_id": 7,
                  "route": "#chat/7", "label": "Conversation · Quarterly report"}
     assert chat_destination(9)["label"] == "Conversation · #9"
+
+
+# ── should_persist_artifact (non-overwrite policy; review P4) ────────────────
+def test_persist_fills_gap_when_no_artifact_exists():
+    # No artifact of that kind yet → the agent may write, truncated or not.
+    assert should_persist_artifact(False, None) is True
+    assert should_persist_artifact(False, None, source_truncated=True) is True
+
+
+def test_persist_never_overwrites_module_artifact():
+    # Summarize/Translate module metas (and legacy None metas) are not agent's —
+    # a complete module output must never be replaced by an agent run.
+    for meta in ("mode=short;summary_mode=fast", "to=vi;engine=argos", None, ""):
+        assert should_persist_artifact(True, meta) is False, repr(meta)
+        assert should_persist_artifact(True, meta, source_truncated=True) is False
+
+
+def test_persist_may_refresh_agents_own_artifact_with_full_context():
+    assert should_persist_artifact(True, AGENT_ARTIFACT_META_PREFIX) is True
+    assert should_persist_artifact(True, "source=agent;to=vi") is True
+    assert should_persist_artifact(True, "source=agent;truncated=1") is True
+
+
+def test_persist_truncated_context_never_overwrites_anything():
+    # Even the agent's own earlier artifact survives a truncated-context run.
+    assert should_persist_artifact(True, "source=agent",
+                                   source_truncated=True) is False
+    assert should_persist_artifact(True, "source=agent;truncated=1",
+                                   source_truncated=True) is False
 
 
 # ── dedupe_destinations ──────────────────────────────────────────────────────

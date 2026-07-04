@@ -22,6 +22,7 @@ contract is unchanged:
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -55,10 +56,11 @@ class AgentStep:
 class AgentResult:
     answer: str
     steps: List[AgentStep] = field(default_factory=list)
-    completed: bool = True                        # False if max_steps hit first
+    completed: bool = True                        # False if max_steps/time hit first
     provider: Optional[str] = None
     plan: Optional[str] = None                    # up-front plan, when planning is on
     citations: List[Dict[str, Any]] = field(default_factory=list)  # merged evidence
+    timed_out: bool = False                       # True when the time budget ended the run
 
     def tool_calls(self) -> List[str]:
         return [s.tool for s in self.steps if s.kind == "tool" and s.tool]
@@ -70,6 +72,7 @@ class AgentResult:
         return {
             "answer": self.answer,
             "completed": self.completed,
+            "timed_out": self.timed_out,
             "provider": self.provider,
             "plan": self.plan,
             "tool_calls": self.tool_calls(),
@@ -131,7 +134,8 @@ class AgentCore:
                  tenancy_tools=("chat", "knowledge_search"),
                  skills: Optional["SkillRegistry"] = None,
                  skill_context: Optional["SkillContext"] = None,
-                 enable_planning: bool = False) -> None:
+                 enable_planning: bool = False,
+                 time_budget_s: Optional[float] = None) -> None:
         self.registry = registry or get_registry()
         self.provider = provider or get_default_provider()
         self.max_steps = max_steps
@@ -145,6 +149,11 @@ class AgentCore:
         self.skills = skills
         self.skill_context = skill_context
         self.enable_planning = enable_planning
+        # Wall-clock budget for one run (seconds). When exceeded the loop stops
+        # starting new tool steps and goes straight to synthesis — a long run
+        # ends safely with an answer from what it has, instead of hanging the
+        # request. None = unbounded (the prior contract).
+        self.time_budget_s = time_budget_s
 
     # ── prompt construction ─────────────────────────────────────────────────────
     def _system_prompt(self) -> str:
@@ -181,6 +190,13 @@ class AgentCore:
             "Arguments must match the schema. Do not wrap the JSON in markdown "
             "fences. Take one action at a time and use the observation that comes "
             "back before deciding the next step.",
+            "",
+            "Grounding: when the user asks about their documents or an attached "
+            "document, retrieve evidence FIRST (a retrieval tool such as "
+            "'knowledge_search' or 'chat', or the attached document text in this "
+            "conversation) and base your answer on it. If you answer a "
+            "document-related question without having checked any document, say "
+            "so explicitly in your answer.",
         ]
         return "\n".join(lines)
 
@@ -258,9 +274,14 @@ class AgentCore:
     # ── main loop ────────────────────────────────────────────────────────────────
     def run(self, user_message: str, *, history: Optional[List[Message]] = None,
             allowed_file_ids: Optional[set] = None) -> AgentResult:
+        t0 = time.monotonic()
         messages = self._initial_messages(user_message, history)
         steps: List[AgentStep] = []
         cite_dicts: List[dict] = []                   # raw citations gathered across steps
+
+        def out_of_time() -> bool:
+            return (self.time_budget_s is not None
+                    and time.monotonic() - t0 >= self.time_budget_s)
 
         # Per-run skill context with the caller's tenancy scope injected (the LLM
         # never chooses the scope). None scope (admin) keeps the base context.
@@ -277,7 +298,13 @@ class AgentCore:
                 "Now carry out the plan. Reply with exactly one JSON action "
                 "(a tool call, a skill call, or a final answer) per step."})
 
+        timed_out = False
         for _ in range(self.max_steps):
+            # Wall-clock gate: past the budget, take no more actions — fall
+            # through to the synthesis pass so the run still ends with an answer.
+            if out_of_time():
+                timed_out = True
+                break
             raw = self.provider.complete(messages)
             action = _extract_json(raw)
 
@@ -327,10 +354,12 @@ class AgentCore:
             messages.append({"role": "assistant", "content": raw})
             messages.append({"role": "user", "content": self._format_observation(name, result)})
 
-        # max_steps exhausted → one synthesis pass, no more tools.
+        # max_steps or time budget exhausted → one synthesis pass, no more tools.
         messages.append({
             "role": "user",
-            "content": "Stop calling tools. Give your best final answer now as plain text.",
+            "content": ("Time is up. " if timed_out else "")
+                       + "Stop calling tools. Give your best final answer now as "
+                         "plain text, based on the observations you already have.",
         })
         final_raw = self.provider.complete(messages)
         answer = (final_raw or "").strip()
@@ -340,4 +369,5 @@ class AgentCore:
         steps.append(AgentStep(kind="final", raw=final_raw))
         return AgentResult(answer=answer, steps=steps, completed=False,
                            provider=getattr(self.provider, "name", None), plan=plan,
-                           citations=self._finalize_citations(cite_dicts))
+                           citations=self._finalize_citations(cite_dicts),
+                           timed_out=timed_out)

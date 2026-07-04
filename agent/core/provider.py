@@ -42,6 +42,54 @@ class LLMProvider(ABC):
         raise NotImplementedError
 
 
+# Chars-per-token estimate used to budget local prompts WITHOUT loading a
+# tokenizer. 3 is conservative for the agent's mixed English/Vietnamese/JSON
+# content; the tokenizer's own truncation stays as a defensive net behind this.
+_CHARS_PER_TOKEN = 3
+_TRUNCATION_MARK = "…(truncated)"
+
+
+def fit_messages_to_char_budget(messages: List[Message],
+                                max_chars: int) -> List[Message]:
+    """Trim a chat message list to ~``max_chars``, protecting the NEWEST content.
+
+    Keeps the leading system message and the final message always (clipping the
+    final message's tail if it alone busts the budget), then re-adds earlier
+    messages newest-first while they fit, stopping at the first that doesn't
+    (no gaps — a hole in the middle of a conversation reads as nonsense).
+    Chronological order is preserved. This protects the latest request /
+    observation from the tokenizer's blind right-truncation, which would
+    otherwise cut the newest content off the end of an oversize prompt.
+    """
+    msgs = [dict(m) for m in (messages or [])]
+    if not msgs:
+        return msgs
+    system = msgs[0] if msgs[0].get("role") == "system" else None
+    body = msgs[1:] if system else msgs
+    if not body:
+        return msgs
+
+    budget = max_chars - len((system or {}).get("content") or "")
+    last = body[-1]
+    last_content = last.get("content") or ""
+    if len(last_content) > budget:
+        keep = max(budget - len(_TRUNCATION_MARK), 0)
+        last = {**last, "content": last_content[:keep] + _TRUNCATION_MARK}
+        budget = 0
+    else:
+        budget -= len(last_content)
+
+    kept = [last]
+    for m in reversed(body[:-1]):
+        cost = len(m.get("content") or "")
+        if cost > budget:
+            break
+        kept.append(m)
+        budget -= cost
+    kept.reverse()
+    return ([system] if system else []) + kept
+
+
 class LocalQwenProvider(LLMProvider):
     """Local Qwen via the existing shared generation path (offline-first)."""
 
@@ -50,14 +98,21 @@ class LocalQwenProvider(LLMProvider):
     def __init__(self) -> None:
         self.last_engine: str | None = None
 
+    _MAX_INPUT_TOKENS = 4096                # roomy: tool specs + observations
+
     def complete(self, messages: List[Message], *, max_tokens: int = 512,
                  temperature: float = 0.2) -> str:
         from services import ai_rewrite_service  # lazy: avoids importing torch at import time
 
+        # Fit to the input budget HERE, newest-content-first: the service's own
+        # tokenizer truncation is right-sided and would cut the latest request /
+        # observation / generation tag off the end of an oversize prompt.
+        fitted = fit_messages_to_char_budget(
+            list(messages), self._MAX_INPUT_TOKENS * _CHARS_PER_TOKEN)
         text, engine = ai_rewrite_service.run_local_messages(
-            list(messages),
+            fitted,
             max_new_tokens=max_tokens,
-            max_input_tokens=4096,          # roomy: tool specs + observations
+            max_input_tokens=self._MAX_INPUT_TOKENS,
             temperature=temperature,
             do_sample=temperature > 0,
         )

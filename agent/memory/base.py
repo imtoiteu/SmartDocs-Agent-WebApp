@@ -26,10 +26,13 @@ class AgentMemory(ABC):
     name: str = "memory"
 
     @abstractmethod
-    def load_history(self, conversation_id) -> List[Message]:
+    def load_history(self, conversation_id, *,
+                     limit: Optional[int] = None) -> List[Message]:
         """Return prior turns as ``[{role, content}, ...]`` in chronological order.
 
         An unknown / ``None`` ``conversation_id`` yields an empty list.
+        ``limit`` keeps only the NEWEST ``limit`` turns (None = all) — callers
+        bound the context they feed an LLM instead of replaying a whole session.
         """
         raise NotImplementedError
 
@@ -49,11 +52,14 @@ class InMemoryAgentMemory(AgentMemory):
     def __init__(self) -> None:
         self._turns: Dict[object, List[dict]] = {}
 
-    def load_history(self, conversation_id) -> List[Message]:
+    def load_history(self, conversation_id, *,
+                     limit: Optional[int] = None) -> List[Message]:
         if conversation_id is None:
             return []
-        return [{"role": t["role"], "content": t["content"]}
-                for t in self._turns.get(conversation_id, [])]
+        turns = self._turns.get(conversation_id, [])
+        if limit is not None:
+            turns = turns[-limit:] if limit > 0 else []
+        return [{"role": t["role"], "content": t["content"]} for t in turns]
 
     def append_turn(self, conversation_id, role: str, content: str, *,
                     tool_calls: Optional[List[str]] = None,

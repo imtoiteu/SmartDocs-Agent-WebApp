@@ -19,14 +19,19 @@ from .base import AgentMemory, Message
 class ConversationMemory(AgentMemory):
     name = "agent-db"
 
-    def load_history(self, conversation_id) -> List[Message]:
+    def load_history(self, conversation_id, *,
+                     limit: Optional[int] = None) -> List[Message]:
         if conversation_id is None:
             return []
         from models import AgentMessage  # lazy: keep `import agent` model-free
-        rows = (AgentMessage.query
-                .filter_by(conversation_id=conversation_id)
-                .order_by(AgentMessage.created_at.asc(), AgentMessage.id.asc())
-                .all())
+        q = (AgentMessage.query
+             .filter_by(conversation_id=conversation_id)
+             .order_by(AgentMessage.created_at.desc(), AgentMessage.id.desc()))
+        if limit is not None:
+            q = q.limit(max(limit, 0))
+        # Newest-first from the DB (so LIMIT keeps the newest turns), then
+        # reversed back to chronological order for the LLM.
+        rows = list(reversed(q.all()))
         return [{"role": m.role, "content": m.content} for m in rows]
 
     def append_turn(self, conversation_id, role: str, content: str, *,

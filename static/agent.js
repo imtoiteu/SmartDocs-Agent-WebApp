@@ -493,7 +493,8 @@
         module: d.module, route: d.route, file_id: d.file_id, label: d.label }));
       appendTurn("assistant", body.answer || "(no answer)", {
         tool_calls: body.tool_calls || [], skill_calls: body.skill_calls || [],
-        status: body.completed ? "completed" : "max steps reached",
+        status: body.completed ? "completed"
+              : (body.timed_out ? "time limit reached" : "max steps reached"),
         artifacts: resultArtifacts,
       });
       renderRunDetails(body);
@@ -919,6 +920,42 @@
     }
   }
 
+  // ── LLM / agent availability (shown on load) ─────────────────────────────────
+  // One read-only call to /api/llm/status so provider, model and enabled state
+  // are visible BEFORE the first run — a disabled agent or missing model is a
+  // labelled state, not a surprise failure. Built with textContent (no HTML
+  // injection from config-derived strings). Best-effort: on any error the line
+  // stays empty and the page behaves as before.
+  async function loadLlmStatus() {
+    const el = $("llm-status");
+    if (!el) return;
+    try {
+      const { body } = await api("/api/llm/status");
+      if (!body || !body.success) return;
+      const enabled = body.enabled || {};
+      const local = body.local || {};
+      const oc = body.openai_compatible || {};
+      let model;
+      if (body.provider === "openai_compatible") {
+        model = (oc.model || "(model not set)") + " @ " + (oc.base_url || "(no endpoint)");
+      } else {
+        model = (local.model || "?") + (local.cached === false ? " — not downloaded" : "");
+      }
+      if (enabled.agent === false) {
+        el.textContent = "⚠ Agent disabled — " +
+          (body.setup_hint || "set ENABLE_AGENT=true (and LLM_PROVIDER) in .env.");
+        el.classList.add("bad");
+        const run = $("run");
+        run.disabled = true;
+        run.title = "The Agent is disabled on this installation.";
+      } else {
+        el.textContent = "LLM: " + (body.provider || "?") + " · " + model +
+          (body.setup_hint ? " — ⚠ " + body.setup_hint : "");
+        if (body.setup_hint) el.classList.add("bad");
+      }
+    } catch (e) { /* status line is optional — never blocks the page */ }
+  }
+
   // ── Tools list ─────────────────────────────────────────────────────────────
   async function loadTools() {
     try {
@@ -951,4 +988,5 @@
   loadSessions();
   loadSkills();
   loadTools();
+  loadLlmStatus();
 })();
