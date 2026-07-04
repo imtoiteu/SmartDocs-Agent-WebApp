@@ -22,7 +22,8 @@ except ImportError:
 
 from agent.core import (  # noqa: E402
     GeminiProvider, GroqProvider, LocalQwenProvider, FallbackProvider, LLMProvider,
-    OpenAICompatibleProvider, get_default_provider, fit_messages_to_char_budget,
+    OpenAICompatibleProvider, get_default_provider, get_openai_compatible_provider,
+    cloud_allowed, fit_messages_to_char_budget,
 )
 
 
@@ -207,6 +208,86 @@ def test_selection_explicit_groq():
     restore = _with_env(GROQ_API_KEY="gk", GEMINI_API_KEY="mk", AGENT_LLM_PROVIDER="groq")
     try:
         assert _kinds(get_default_provider()) == ["GroqProvider", "LocalQwenProvider"]
+    finally:
+        restore()
+
+
+# ── Local only vs cloud-allowed (privacy switch, review P7) ──────────────────
+def test_cloud_allowed_env_values():
+    for raw, expect in [(None, True), ("", True), ("true", True), ("1", True),
+                        ("false", False), ("0", False), ("no", False),
+                        ("FALSE", False), ("off", False)]:
+        restore = _with_env(ALLOW_CLOUD=raw)
+        try:
+            assert cloud_allowed() is expect, f"ALLOW_CLOUD={raw!r}"
+        finally:
+            restore()
+
+
+def test_local_only_excludes_cloud_keys_from_chain():
+    # Keys present but Local only → Groq/Gemini never appear; pure local chain.
+    restore = _with_env(GROQ_API_KEY="gk", GEMINI_API_KEY="mk", ALLOW_CLOUD="false",
+                        AGENT_LLM_PROVIDER="auto", LLM_PROVIDER=None,
+                        OPENAI_COMPATIBLE_BASE_URL=None, OPENAI_COMPATIBLE_MODEL=None)
+    try:
+        assert isinstance(get_default_provider(), LocalQwenProvider)
+    finally:
+        restore()
+
+
+def test_local_only_overrides_explicit_cloud_pin():
+    # Even an explicit AGENT_LLM_PROVIDER=groq pin must not beat the privacy
+    # switch — the guarantee is absolute while Local only is on.
+    restore = _with_env(GROQ_API_KEY="gk", ALLOW_CLOUD="false",
+                        AGENT_LLM_PROVIDER="groq", LLM_PROVIDER=None,
+                        OPENAI_COMPATIBLE_BASE_URL=None, OPENAI_COMPATIBLE_MODEL=None)
+    try:
+        assert isinstance(get_default_provider(), LocalQwenProvider)
+    finally:
+        restore()
+
+
+def test_local_only_keeps_self_hosted_endpoint():
+    # An explicitly configured OpenAI-compatible endpoint is self-hosted by
+    # definition and stays available in Local-only mode (documented behavior).
+    restore = _with_env(GROQ_API_KEY="gk", ALLOW_CLOUD="false",
+                        AGENT_LLM_PROVIDER="auto", LLM_PROVIDER=None,
+                        OPENAI_COMPATIBLE_BASE_URL="http://127.0.0.1:8000",
+                        OPENAI_COMPATIBLE_MODEL="m")
+    try:
+        p = get_default_provider()
+        assert _kinds(p) == ["OpenAICompatibleProvider", "LocalQwenProvider"]
+    finally:
+        restore()
+
+
+def test_cloud_allowed_keeps_prior_chain():
+    # Default (cloud allowed) is byte-for-byte the pre-existing behavior.
+    restore = _with_env(GROQ_API_KEY="gk", GEMINI_API_KEY="mk", ALLOW_CLOUD=None,
+                        AGENT_LLM_PROVIDER="auto", LLM_PROVIDER=None,
+                        OPENAI_COMPATIBLE_BASE_URL=None, OPENAI_COMPATIBLE_MODEL=None)
+    try:
+        assert _kinds(get_default_provider()) == [
+            "GroqProvider", "GeminiProvider", "LocalQwenProvider"]
+    finally:
+        restore()
+
+
+# ── get_openai_compatible_provider (shared helper, review P8) ────────────────
+def test_openai_compatible_helper_requires_url_and_model():
+    restore = _with_env(OPENAI_COMPATIBLE_BASE_URL=None, OPENAI_COMPATIBLE_MODEL=None,
+                        OPENAI_COMPATIBLE_API_KEY=None)
+    try:
+        assert get_openai_compatible_provider() is None
+    finally:
+        restore()
+    restore = _with_env(OPENAI_COMPATIBLE_BASE_URL="http://h:8000",
+                        OPENAI_COMPATIBLE_MODEL="m", OPENAI_COMPATIBLE_API_KEY="k")
+    try:
+        oc = get_openai_compatible_provider()
+        assert isinstance(oc, OpenAICompatibleProvider)
+        assert oc.url == "http://h:8000/v1/chat/completions"
+        assert oc.api_key == "k" and oc.model == "m"
     finally:
         restore()
 

@@ -811,6 +811,10 @@ def llm_status():
         return jsonify({
             "success":  True,
             "provider": cfg.LLM_PROVIDER,
+            # Privacy switch (P7): the active processing mode, surfaced so the
+            # UI/desktop shell can show whether cloud AI/translation is in play.
+            "allow_cloud": cfg.ALLOW_CLOUD,
+            "processing_mode": "cloud_allowed" if cfg.ALLOW_CLOUD else "local_only",
             "profile":  cfg.LOCAL_LLM_PROFILE,
             "enabled":  {"chat": cfg.ENABLE_CHAT, "agent": cfg.ENABLE_AGENT,
                          "rewrite": cfg.ENABLE_REWRITE},

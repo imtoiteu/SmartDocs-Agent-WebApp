@@ -42,6 +42,7 @@ from agent.results import (collect_doc_outputs, doc_artifact_destinations,
                            chat_destination, dedupe_destinations,
                            should_persist_artifact, AGENT_ARTIFACT_META_PREFIX)
 from agent.ocr_routing import select_ocr_engine
+from agent.progress import get_progress_registry, RUN_ID_RE
 
 logger = logging.getLogger(__name__)
 agent_bp = Blueprint("agent", __name__)
@@ -265,6 +266,11 @@ _DOC_CONTEXT_MAX_CHARS = 6000
 # stored and visible in the transcript — they just don't ride along in the prompt.
 _MAX_HISTORY_TURNS = 12
 
+# Default steps for a run when the client sends none. MUST match the agent
+# page's visible default (static/agent.html #steps value / agent.js fallback) —
+# test_progress_and_defaults.py pins all three together.
+_DEFAULT_MAX_STEPS = 3
+
 
 def _document_context_message(doc):
     """A synthetic user turn carrying the scoped document's text, plus whether the
@@ -459,6 +465,16 @@ def agent_ensure_indexed():
     return jsonify({"success": True, "indexed": False, "needs_ocr": True})
 
 
+@agent_bp.route("/api/agent/progress/<run_id>", methods=["GET"])
+@login_required
+def agent_progress(run_id):
+    """Live progress for an in-flight agent run (owner-scoped). ``progress`` is
+    null for an unknown / expired / foreign run — the client just keeps its
+    generic spinner text in that case."""
+    prog = get_progress_registry().get(run_id, current_user.id)
+    return jsonify({"success": True, "progress": prog})
+
+
 @agent_bp.route("/api/agent/skills", methods=["GET"])
 @login_required
 def agent_skills():
@@ -558,9 +574,9 @@ def agent_run():
     if not isinstance(client_history, list):
         client_history = []
     try:
-        max_steps = int(data.get("max_steps") or 4)
+        max_steps = int(data.get("max_steps") or _DEFAULT_MAX_STEPS)
     except (TypeError, ValueError):
-        max_steps = 4
+        max_steps = _DEFAULT_MAX_STEPS
     max_steps = max(1, min(max_steps, 6))
 
     if not message:
@@ -617,6 +633,14 @@ def agent_run():
     else:
         allowed_ids = _owned_file_ids()
 
+    # Live progress (optional): the client may send an opaque run_id and poll
+    # /api/agent/progress/<run_id> while this request is in flight. Malformed or
+    # missing ids simply disable progress — never an error.
+    run_id = str(data.get("run_id") or "").strip()
+    progress = get_progress_registry() if RUN_ID_RE.match(run_id) else None
+    if progress:
+        progress.start(run_id, current_user.id, max_steps)
+
     core = AgentCore(registry=_safe_registry(),
                      provider=get_default_provider(),
                      max_steps=max_steps,
@@ -624,7 +648,9 @@ def agent_run():
                      skill_context=_agent_skill_context(),
                      enable_planning=True,
                      time_budget_s=(cfg.AGENT_MAX_SECONDS
-                                    if cfg.AGENT_MAX_SECONDS > 0 else None))
+                                    if cfg.AGENT_MAX_SECONDS > 0 else None),
+                     on_progress=((lambda ev: progress.update(run_id, **ev))
+                                  if progress else None))
     try:
         result = core.run(message, history=history, allowed_file_ids=allowed_ids)
     except Exception as exc:  # noqa: BLE001
@@ -640,6 +666,9 @@ def agent_run():
                                "Please try again.")
         return jsonify({"success": False, "error": "Agent run failed.",
                         "conversation_id": (conv.id if conv else None)}), 500
+    finally:
+        if progress:
+            progress.finish(run_id)            # a final poll sees phase="done"
 
     # Build the existing-module "View Result" destinations + persist derived outputs
     # (best-effort; never breaks the response). Done before persisting the turn so the

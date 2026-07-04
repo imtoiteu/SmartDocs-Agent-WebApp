@@ -452,6 +452,16 @@
   }
 
   // ── Agent run ──────────────────────────────────────────────────────────────
+  // Human text for a progress phase polled from /api/agent/progress/<run_id>.
+  function progressText(p) {
+    const at = p.step ? "Step " + p.step + "/" + (p.max_steps || "?") + ": " : "";
+    if (p.phase === "planning") return "Planning…";
+    if (p.phase === "thinking") return at + "thinking…";
+    if (p.phase === "acting") return at + "running " + (p.name || p.kind || "a tool") + "…";
+    if (p.phase === "synthesis") return "Writing the final answer…";
+    return "Running…";
+  }
+
   async function runAgent() {
     const message = $("msg").value.trim();
     if (!message) { $("run-status").textContent = "Enter a request first."; return; }
@@ -467,13 +477,30 @@
       ? [{ kind: "source", file_id: fileId, route: "#ocr/" + fileId, label: fileName }] : [];
     appendTurn("user", message, { artifacts: userArtifacts });   // optimistic echo
     $("msg").value = "";
+    // Progress feedback: an opaque run id lets us poll the run's current phase
+    // ("Step 2/3: running chat…") while the POST is in flight. Best-effort — a
+    // failed poll just leaves the generic status text.
+    const runId = "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+    let polling = true;
+    const poller = setInterval(async () => {
+      if (!polling) return;
+      try {
+        const { body } = await api("/api/agent/progress/" + encodeURIComponent(runId));
+        const p = body && body.progress;
+        if (polling && p && p.phase && p.phase !== "done") {
+          $("run-status").textContent = progressText(p);
+        }
+      } catch (e) { /* progress is optional */ }
+    }, 1200);
     try {
-      const payload = { message, max_steps, conversation_id: conversationId };
+      const payload = { message, max_steps, conversation_id: conversationId,
+                        run_id: runId };
       if (fileId) payload.file_id = fileId;
       const { body } = await api("/api/agent/run", {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      polling = false;                       // a late poll must not overwrite the result
       if (!body.success) {
         // A failed run still records an honest "run failed" turn server-side (F5).
         // Adopt the session and re-render so the transcript reflects what happened
@@ -503,6 +530,8 @@
     } catch (e) {
       $("run-status").textContent = "Request failed.";
     } finally {
+      polling = false;
+      clearInterval(poller);
       $("run").disabled = false;
     }
   }
@@ -941,6 +970,9 @@
       } else {
         model = (local.model || "?") + (local.cached === false ? " — not downloaded" : "");
       }
+      // Active processing mode (P7): make "Local only" vs cloud visible.
+      const mode = body.processing_mode === "local_only"
+        ? " · 🔒 Local only (no cloud)" : "";
       if (enabled.agent === false) {
         el.textContent = "⚠ Agent disabled — " +
           (body.setup_hint || "set ENABLE_AGENT=true (and LLM_PROVIDER) in .env.");
@@ -949,7 +981,7 @@
         run.disabled = true;
         run.title = "The Agent is disabled on this installation.";
       } else {
-        el.textContent = "LLM: " + (body.provider || "?") + " · " + model +
+        el.textContent = "LLM: " + (body.provider || "?") + " · " + model + mode +
           (body.setup_hint ? " — ⚠ " + body.setup_hint : "");
         if (body.setup_hint) el.classList.add("bad");
       }

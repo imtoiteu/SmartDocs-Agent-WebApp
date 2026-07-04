@@ -519,6 +519,14 @@ class _Config:
         self.ENABLE_AGENT:   bool = _env_bool("ENABLE_AGENT",   _llm_on)
         self.ENABLE_REWRITE: bool = _env_bool("ENABLE_REWRITE", _llm_on)
 
+        # Privacy switch — "Local only" vs "Allow cloud processing". When False,
+        # document text / retrieval excerpts / prompts are never sent to the
+        # implicit cloud AI APIs (Groq, Gemini, OpenAI, OpenRouter) and
+        # translation never uses the online API. An OPENAI_COMPATIBLE_* endpoint
+        # the user explicitly configured is treated as self-hosted and stays
+        # available. Default True — the pre-existing behavior.
+        self.ALLOW_CLOUD: bool = _env_bool("ALLOW_CLOUD", True)
+
         # Wall-clock budget for one agent run (seconds). Past it the agent stops
         # calling tools and synthesizes an answer from the observations it has —
         # a slow local model can no longer hang a request indefinitely.

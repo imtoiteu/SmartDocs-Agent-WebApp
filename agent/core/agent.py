@@ -135,7 +135,8 @@ class AgentCore:
                  skills: Optional["SkillRegistry"] = None,
                  skill_context: Optional["SkillContext"] = None,
                  enable_planning: bool = False,
-                 time_budget_s: Optional[float] = None) -> None:
+                 time_budget_s: Optional[float] = None,
+                 on_progress=None) -> None:
         self.registry = registry or get_registry()
         self.provider = provider or get_default_provider()
         self.max_steps = max_steps
@@ -154,6 +155,18 @@ class AgentCore:
         # ends safely with an answer from what it has, instead of hanging the
         # request. None = unbounded (the prior contract).
         self.time_budget_s = time_budget_s
+        # Optional progress callback, called with one dict per phase change
+        # (planning / thinking / acting / synthesis). Purely observational and
+        # best-effort — a raising callback never breaks the run.
+        self.on_progress = on_progress
+
+    def _emit(self, **event) -> None:
+        if self.on_progress is None:
+            return
+        try:
+            self.on_progress(dict(event))
+        except Exception:                       # progress must never break a run
+            pass
 
     # ── prompt construction ─────────────────────────────────────────────────────
     def _system_prompt(self) -> str:
@@ -291,6 +304,8 @@ class AgentCore:
                        if allowed_file_ids is not None else self.skill_context)
 
         # Planning (optional) — analyze the request, then guide execution by it.
+        if self.enable_planning:
+            self._emit(phase="planning")
         plan = self._make_plan(messages) if self.enable_planning else None
         if plan:
             messages.append({"role": "assistant", "content": "Plan: " + plan})
@@ -299,12 +314,13 @@ class AgentCore:
                 "(a tool call, a skill call, or a final answer) per step."})
 
         timed_out = False
-        for _ in range(self.max_steps):
+        for step_no in range(1, self.max_steps + 1):
             # Wall-clock gate: past the budget, take no more actions — fall
             # through to the synthesis pass so the run still ends with an answer.
             if out_of_time():
                 timed_out = True
                 break
+            self._emit(phase="thinking", step=step_no, max_steps=self.max_steps)
             raw = self.provider.complete(messages)
             action = _extract_json(raw)
 
@@ -339,6 +355,8 @@ class AgentCore:
             elif kind == "tool" and not has_tool and has_skill:
                 kind = "skill"                     # skill name placed in the tool slot
 
+            self._emit(phase="acting", step=step_no, max_steps=self.max_steps,
+                       kind=kind, name=name)
             if kind == "skill":
                 result = self.skills.run(name, run_ctx, **args)     # SkillResult
             else:
@@ -355,6 +373,7 @@ class AgentCore:
             messages.append({"role": "user", "content": self._format_observation(name, result)})
 
         # max_steps or time budget exhausted → one synthesis pass, no more tools.
+        self._emit(phase="synthesis")
         messages.append({
             "role": "user",
             "content": ("Time is up. " if timed_out else "")

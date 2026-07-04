@@ -320,6 +320,37 @@ class FallbackProvider(LLMProvider):
         raise last_err or RuntimeError("All providers failed")
 
 
+def cloud_allowed() -> bool:
+    """The "Local only / Allow cloud processing" switch (ALLOW_CLOUD, default
+    true). Read from the environment with config._env_bool semantics so the
+    provider layer stays config/Flask-free. When False, the implicit cloud APIs
+    (Groq / Gemini) are excluded from every chain — document text, retrieval
+    excerpts and prompts stay on this machine. An explicitly configured
+    OPENAI_COMPATIBLE_* endpoint is treated as self-hosted and stays available.
+    """
+    raw = (os.environ.get("ALLOW_CLOUD") or "").strip().lower()
+    if raw == "":
+        return True
+    return raw in ("1", "true", "yes", "on")
+
+
+def get_openai_compatible_provider() -> "OpenAICompatibleProvider | None":
+    """The explicitly configured OpenAI-compatible endpoint, or None.
+
+    Shared by the agent chain AND the chat / AI-rewrite services (P8), so
+    Document QA and AI rewrite work on installs without a local model.
+    """
+    url = (os.environ.get("OPENAI_COMPATIBLE_BASE_URL") or "").strip()
+    model = (os.environ.get("OPENAI_COMPATIBLE_MODEL") or "").strip()
+    key = (os.environ.get("OPENAI_COMPATIBLE_API_KEY") or "").strip()
+    if not url or not model:
+        return None
+    try:
+        return OpenAICompatibleProvider(url, model, key)
+    except Exception:
+        return None
+
+
 def get_default_provider() -> LLMProvider:
     """Build the provider chain from the environment, offline-first.
 
@@ -330,6 +361,10 @@ def get_default_provider() -> LLMProvider:
     ``gemini`` / ``openai_compatible`` pin that one provider (still
     local-backed).
 
+    Privacy (``ALLOW_CLOUD=false`` — Local only): Groq and Gemini are excluded
+    even when their keys are set or explicitly pinned; the chain is the
+    OpenAI-compatible endpoint (self-hosted, if configured) + local Qwen.
+
     Cross-platform note: ``LLM_PROVIDER=openai_compatible`` (the platform-wide
     provider switch in config.py) promotes the configured OpenAI-compatible
     endpoint to the FRONT of the chain, so a Windows/Linux install without a
@@ -339,36 +374,32 @@ def get_default_provider() -> LLMProvider:
     if choice == "local":
         return LocalQwenProvider()
 
+    allow_cloud = cloud_allowed()
     groq_key = (os.environ.get("GROQ_API_KEY") or "").strip()
     gem_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
     chain: List[LLMProvider] = []
 
-    if groq_key and choice in ("auto", "groq"):
+    if groq_key and choice in ("auto", "groq") and allow_cloud:
         try:
             chain.append(GroqProvider(groq_key,
                          (os.environ.get("GROQ_MODEL") or DEFAULT_GROQ_MODEL).strip()))
         except Exception:
             pass
-    if gem_key and choice in ("auto", "gemini"):
+    if gem_key and choice in ("auto", "gemini") and allow_cloud:
         try:
             chain.append(GeminiProvider(gem_key,
                          (os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL).strip()))
         except Exception:
             pass
 
-    oc_url = (os.environ.get("OPENAI_COMPATIBLE_BASE_URL") or "").strip()
-    oc_model = (os.environ.get("OPENAI_COMPATIBLE_MODEL") or "").strip()
-    oc_key = (os.environ.get("OPENAI_COMPATIBLE_API_KEY") or "").strip()
     llm_provider = (os.environ.get("LLM_PROVIDER") or "local_hf").strip().lower()
-    if oc_url and oc_model and choice in ("auto", "openai_compatible"):
-        try:
-            oc = OpenAICompatibleProvider(oc_url, oc_model, oc_key)
+    if choice in ("auto", "openai_compatible"):
+        oc = get_openai_compatible_provider()
+        if oc is not None:
             if llm_provider == "openai_compatible" or choice == "openai_compatible":
                 chain.insert(0, oc)     # explicit platform/agent choice → first
             else:
                 chain.append(oc)        # auto → after the cloud keys, before local
-        except Exception:
-            pass
 
     chain.append(LocalQwenProvider())   # always the final, offline fallback
     return chain[0] if len(chain) == 1 else FallbackProvider(chain)

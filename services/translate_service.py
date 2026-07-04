@@ -459,6 +459,19 @@ def _translate_impl(
 ) -> dict:
     t0 = time.time()
 
+    # Privacy (Local only — ALLOW_CLOUD=false): text must never reach the online
+    # translation API. 'auto' silently resolves to offline (no connectivity probe
+    # either); an explicit 'online' request gets a clear error instead of a
+    # silent mode change.
+    if not cfg.ALLOW_CLOUD:
+        if engine == "online":
+            raise RuntimeError(
+                "Online translation is disabled: this installation is in "
+                "Local-only mode (ALLOW_CLOUD=false in .env). Use offline mode.")
+        if engine == "auto":
+            logger.info("[TRANSLATE] Local-only mode → forcing offline (Argos)")
+            engine = "offline"
+
     # Determine mode and engine for logging
     log_mode   = "Online" if engine == "online" else "Offline" if engine == "offline" else "Auto"
     log_engine = "Argos" if engine == "offline" else "API" if engine == "online" else "Auto (API -> Argos)"

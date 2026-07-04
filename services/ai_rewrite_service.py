@@ -417,8 +417,30 @@ def run_local_messages(
 #  API FALLBACK
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _run_openai_compatible(sentences: List[str], style: str, lang: str) -> Tuple[str, str]:
+    """Run the rewrite through the explicitly configured OpenAI-compatible
+    endpoint (OPENAI_COMPATIBLE_* — vLLM / llama.cpp / LM Studio), via the shared
+    provider abstraction (P8). Self-hosted by definition, so it is available in
+    Local-only mode too. Raises NoAIAvailableError when no endpoint is configured.
+    """
+    from agent.core.provider import get_openai_compatible_provider  # lazy, torch-free
+    oc = get_openai_compatible_provider()
+    if oc is None:
+        raise NoAIAvailableError("No OpenAI-compatible endpoint configured")
+    messages = _build_messages(sentences, style, lang)
+    text = oc.complete(messages, max_tokens=MAX_NEW_TOKENS, temperature=0.3)
+    return (text or "").strip(), f"ai_api:{oc.name}"
+
+
 def _run_api(sentences: List[str], style: str, lang: str) -> Tuple[str, str]:
     """Try configured online API. Returns (text, engine_label)."""
+    # Privacy (Local only — ALLOW_CLOUD=false): never send text to the implicit
+    # cloud APIs. Same error type as "no keys", so the caller's extractive
+    # fallback contract is unchanged.
+    if not cfg.ALLOW_CLOUD:
+        raise NoAIAvailableError(
+            "Cloud AI APIs are disabled (ALLOW_CLOUD=false — Local-only mode)")
+
     messages = _build_messages(sentences, style, lang)
 
     # ── OpenAI-compatible ───────────────────────────────────────────────────
@@ -549,27 +571,25 @@ def ai_rewrite(
     if not condensed_sentences:
         raise NoAIAvailableError("No sentences provided to AI rewrite")
 
-    # ── Try local first ──────────────────────────────────────────────────────
-    try:
-        result, engine = _run_local(condensed_sentences, style, lang)
-        result = _clean_output(result, style)
-        if result:
-            return result, engine
-    except NoAIAvailableError:
-        pass   # no local model — try API
-    except Exception as e:
-        logger.error(f"[AIRewrite] Local inference error: {e}")
+    # Backend order (P8): the local model first by default; when the platform
+    # provider is the OpenAI-compatible endpoint (LLM_PROVIDER=openai_compatible)
+    # that endpoint comes FIRST so a cloud-only install needs no local model.
+    # The implicit cloud APIs (_run_api) stay last and are ALLOW_CLOUD-gated.
+    if cfg.LLM_PROVIDER == "openai_compatible":
+        backends = (_run_openai_compatible, _run_local, _run_api)
+    else:
+        backends = (_run_local, _run_openai_compatible, _run_api)
 
-    # ── Try API fallback ─────────────────────────────────────────────────────
-    try:
-        result, engine = _run_api(condensed_sentences, style, lang)
-        result = _clean_output(result, style)
-        if result:
-            return result, engine
-    except NoAIAvailableError:
-        pass
-    except Exception as e:
-        logger.error(f"[AIRewrite] API error: {e}")
+    for backend in backends:
+        try:
+            result, engine = backend(condensed_sentences, style, lang)
+            result = _clean_output(result, style)
+            if result:
+                return result, engine
+        except NoAIAvailableError:
+            pass   # backend not available — try the next one
+        except Exception as e:
+            logger.error(f"[AIRewrite] {backend.__name__} error: {e}")
 
     raise NoAIAvailableError("All AI backends failed or unavailable")
 

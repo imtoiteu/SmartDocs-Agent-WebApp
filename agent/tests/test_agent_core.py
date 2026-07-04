@@ -222,6 +222,50 @@ def test_no_time_budget_keeps_old_contract():
     assert res.timed_out is False and res.completed is True
 
 
+# ── on_progress events (run progress feedback) ───────────────────────────────
+def test_on_progress_emits_thinking_and_acting():
+    events = []
+    fp = FakeProvider(['{"tool": "echo", "arguments": {}}', '{"final": "ok"}'])
+    core = AgentCore(registry=_registry(EchoTool()), provider=fp, max_steps=3,
+                     on_progress=events.append)
+    res = core.run("q")
+    assert res.answer == "ok"
+    phases = [e["phase"] for e in events]
+    assert phases == ["thinking", "acting", "thinking"]
+    acting = events[1]
+    assert acting == {"phase": "acting", "step": 1, "max_steps": 3,
+                      "kind": "tool", "name": "echo"}
+    assert events[2]["step"] == 2                    # the final-answer step
+
+
+def test_on_progress_planning_and_synthesis_phases():
+    events = []
+    fp = FakeProvider(["a short plan",                       # planning pass
+                       '{"tool": "echo", "arguments": {}}',  # step 1 (max_steps=1)
+                       "synthesized"])                       # synthesis pass
+    core = AgentCore(registry=_registry(EchoTool()), provider=fp, max_steps=1,
+                     enable_planning=True, on_progress=events.append)
+    res = core.run("q")
+    assert res.plan == "a short plan" and res.completed is False
+    phases = [e["phase"] for e in events]
+    assert phases[0] == "planning" and phases[-1] == "synthesis"
+
+
+def test_on_progress_raising_callback_never_breaks_run():
+    def boom(_event):
+        raise RuntimeError("observer crashed")
+    fp = FakeProvider(['{"final": "still fine"}'])
+    core = AgentCore(registry=_registry(EchoTool()), provider=fp, max_steps=2,
+                     on_progress=boom)
+    assert core.run("q").answer == "still fine"
+
+
+def test_no_on_progress_keeps_old_contract():
+    fp = FakeProvider(['{"final": "ok"}'])
+    core = AgentCore(registry=_registry(EchoTool()), provider=fp, max_steps=2)
+    assert core.run("q").answer == "ok"
+
+
 # ── retrieval grounding instruction (review P6) ──────────────────────────────
 def test_system_prompt_requires_grounding_or_disclosure():
     core = AgentCore(registry=_registry(EchoTool()),

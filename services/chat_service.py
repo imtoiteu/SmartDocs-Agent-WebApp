@@ -742,12 +742,55 @@ def index_document_async(file_id: str, text: str, source_label: str = "") -> Non
     threading.Thread(target=_run, name="auto-index", daemon=True).start()
 
 
+def pick_rebuild_texts(rows) -> List[Tuple[str, str]]:
+    """Choose ONE text per document from persisted (file_id, kind, content)
+    rows: the canonical 'ocr' artifact wins over plain extracted 'text' (the
+    same preference the agent's document scope uses), and empty contents are
+    skipped. Pure — unit-testable without a DB. First-seen document order is
+    preserved so newer queries can order the rebuild.
+    """
+    chosen: Dict[str, Tuple[str, str]] = {}     # file_id → (kind, content)
+    order: List[str] = []
+    for file_id, kind, content in rows:
+        if not file_id or kind not in ("ocr", "text"):
+            continue
+        if not content or not str(content).strip():
+            continue
+        cur = chosen.get(file_id)
+        if cur is None:
+            chosen[file_id] = (kind, content)
+            order.append(file_id)
+        elif cur[0] == "text" and kind == "ocr":
+            chosen[file_id] = (kind, content)   # ocr replaces text
+    return [(fid, chosen[fid][1]) for fid in order]
+
+
+def rebuild_index_from_pairs(pairs, _index=None) -> int:
+    """Re-index (file_id, text) pairs into the in-memory store, per-document
+    best-effort (one bad document never stops the rest). Returns how many
+    documents were indexed. ``_index`` overrides the indexer for tests.
+    """
+    index = _index or index_document
+    indexed = 0
+    for file_id, text in pairs:
+        try:
+            if index(file_id, text, source_label="rebuild"):
+                indexed += 1
+        except Exception:
+            logger.warning(f"[Rebuild] failed for file_id={file_id}", exc_info=True)
+    return indexed
+
+
 def rebuild_indexes_from_db(app) -> None:
     """Rebuild the in-memory vector store from persisted text on startup (B4).
 
     The FAISS index is in-memory and lost on restart. This re-embeds the stored
     'ocr' / 'text' artifacts (A2) in a background daemon thread so previously
-    processed documents become queryable again without a manual re-index.
+    processed documents become queryable again without a manual re-index —
+    corpus-wide agent/chat retrieval works after a restart, not just the
+    document-scoped path that re-indexes on demand. Tenancy is unaffected:
+    the index is keyed by file_id only; ownership is enforced at query time
+    (``retrieve_chunks(allowed_file_ids=…)``), exactly as for live indexing.
     """
     def _run():
         try:
@@ -756,19 +799,16 @@ def rebuild_indexes_from_db(app) -> None:
                 arts = (DocumentArtifact.query
                         .filter(DocumentArtifact.kind.in_(("ocr", "text")))
                         .all())
-                pairs = []
+                rows = []
                 for art in arts:
                     doc = Document.query.get(art.document_id)
-                    if doc and art.content and art.content.strip():
-                        pairs.append((doc.file_id, art.content))
+                    if doc:
+                        rows.append((doc.file_id, art.kind, art.content))
+            # One text per document, 'ocr' preferred over 'text' — indexing both
+            # would leave whichever happened to come last from the query.
+            pairs = pick_rebuild_texts(rows)
             # Embed OUTSIDE the app context — index_document only touches memory.
-            indexed = 0
-            for file_id, text in pairs:
-                try:
-                    if index_document(file_id, text, source_label="rebuild"):
-                        indexed += 1
-                except Exception:
-                    logger.warning(f"[Rebuild] failed for file_id={file_id}", exc_info=True)
+            indexed = rebuild_index_from_pairs(pairs)
             if pairs:
                 logger.info(f"[Rebuild] Re-indexed {indexed}/{len(pairs)} document(s) from DB.")
         except Exception:
@@ -990,6 +1030,56 @@ def _build_chat_prompt(
 # ══════════════════════════════════════════════════════════════════════════════
 #  INFERENCE
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _complete_via_openai_compatible(messages: List[dict]) -> Optional[Tuple[str, str]]:
+    """(answer, engine_label) via the configured OpenAI-compatible endpoint, or
+    None when no endpoint is configured (P8). The provider abstraction is
+    imported lazily and is torch-free; the endpoint is explicitly user-configured
+    (vLLM / llama.cpp / LM Studio), so it is available in Local-only mode too.
+    """
+    from agent.core.provider import get_openai_compatible_provider
+    oc = get_openai_compatible_provider()
+    if oc is None:
+        return None
+    answer = oc.complete(messages, max_tokens=MAX_OUT_TOKENS, temperature=0.7)
+    return (answer or "").strip(), oc.name
+
+
+def _run_inference_routed(messages: List[dict]) -> Tuple[str, str, bool]:
+    """Route chat inference through the configured LLM provider (P8).
+
+    * ``LLM_PROVIDER=openai_compatible`` (+ endpoint configured) → the endpoint
+      answers Document QA, no local model needed; the local model stays as a
+      fallback when the endpoint errors.
+    * Otherwise → the local chat model exactly as before; if it is UNAVAILABLE
+      (RuntimeError from load) and an endpoint is configured, the endpoint is
+      tried before giving up — the original error is re-raised when it can't
+      help, preserving the existing error contract.
+    """
+    prefer_oc = cfg.LLM_PROVIDER == "openai_compatible"
+    if prefer_oc:
+        try:
+            res = _complete_via_openai_compatible(messages)
+            if res is not None:
+                return res[0], res[1], False
+            logger.warning("[LLM] LLM_PROVIDER=openai_compatible but no endpoint "
+                           "configured — falling back to the local chat model")
+        except Exception as e:
+            logger.warning(f"[LLM] OpenAI-compatible endpoint failed ({e}) — "
+                           "falling back to the local chat model")
+    try:
+        return _run_inference(messages)
+    except RuntimeError:
+        if not prefer_oc:
+            try:
+                res = _complete_via_openai_compatible(messages)
+            except Exception as e:
+                logger.warning(f"[LLM] OpenAI-compatible fallback failed: {e}")
+                res = None
+            if res is not None:
+                return res[0], res[1], False
+        raise
+
 
 def _run_inference(messages: List[dict], force_cpu: bool = False) -> Tuple[str, str, bool]:
     """Run messages through the chat model.
@@ -1317,11 +1407,11 @@ def chat(
     messages = _build_chat_prompt(query, chunks, mode, history)
     logger.info(f"[Chat] Prompt built ({time.time()-t_prompt:.3f}s)  messages={len(messages)}")
 
-    # ── Stage: LLM inference ───────────────────────────────────────────────
+    # ── Stage: LLM inference (provider-routed, P8) ─────────────────────────
     logger.info("[Chat] Starting LLM inference…")
     t_infer = time.time()
     try:
-        answer, engine, cancelled = _run_inference(messages)
+        answer, engine, cancelled = _run_inference_routed(messages)
     except Exception as e:
         logger.error(f"[Chat] ✗ Inference failed: {e}", exc_info=True)
         raise
