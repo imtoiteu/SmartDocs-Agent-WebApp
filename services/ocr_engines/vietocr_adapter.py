@@ -24,6 +24,8 @@ class VietOCREngine(OCREngine):
 
     def _get_detector(self):
         if self._detector is None:
+            from ._paddle_guard import disable_paddle_signal_handler
+            disable_paddle_signal_handler()  # before Paddle init (Paddle+Torch coexist)
             from paddleocr import PaddleOCR
 
             # Pin detection to PP-OCRv5 so VietOCR's detection boxes stay unchanged

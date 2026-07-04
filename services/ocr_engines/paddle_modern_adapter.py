@@ -146,6 +146,8 @@ class PaddleOCRModernEngine(OCREngine):
 
     def _get_pipe(self):
         if self._pipe is None:
+            from ._paddle_guard import disable_paddle_signal_handler
+            disable_paddle_signal_handler()  # before Paddle init (Paddle+Torch coexist)
             from paddleocr import PPStructureV3
 
             # Document preprocessing (orientation + UVDoc unwarping) is ON: PP-StructureV3's

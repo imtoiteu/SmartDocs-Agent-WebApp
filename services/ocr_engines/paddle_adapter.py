@@ -15,6 +15,8 @@ class PaddleOCREngine(OCREngine):
 
     def _get_ocr(self):
         if self._ocr is None:
+            from ._paddle_guard import disable_paddle_signal_handler
+            disable_paddle_signal_handler()  # before Paddle init (Paddle+Torch coexist)
             from paddleocr import PaddleOCR
 
             # Pin to PP-OCRv5 so this "Legacy" engine stays byte-for-byte unchanged
