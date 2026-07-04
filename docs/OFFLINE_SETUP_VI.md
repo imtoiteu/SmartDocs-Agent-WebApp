@@ -120,6 +120,18 @@ layout GLM là ngoại lệ, được kiểm tra trong cache mặc định `~/.c
 - **"No chat model could be loaded" dù trước đó báo ✅** — đó là bản kiểm tra cũ chỉ
   xét sự tồn tại thư mục. Cập nhật lại mã, chạy lại `check_offline.sh`; nếu giờ báo
   thiếu Local LLM, chạy `setup_offline.py`.
+- **VietOCR lỗi `'NoneType' object is not iterable`** — triệu chứng cũ của file
+  `models/vietocr/config.yml` **rỗng hoặc hỏng** (loader của vietocr crash như vậy
+  khi file parse ra rỗng). `scripts/setup_offline.sh` giờ kiểm tra config.yml hiện
+  có và **tạo lại** khi hỏng (backup: `config.yml.bak`) bằng chính
+  `Cfg.load_config_from_name()` của vietocr, rồi xác nhận bằng cách khởi tạo
+  Predictor thật. Runtime và `check_offline.sh` cũng kiểm tra nội dung — file hỏng
+  sẽ báo lý do chính xác, không bao giờ ✅.
+- **"Offline translation … not installed" dù gói có trên đĩa** — lỗi và
+  `/api/translate/status` giờ nêu rõ cặp ngôn ngữ thiếu, các cặp đã cài, và thư mục
+  gói (`models/argos/packages`). Nếu gói có trên đĩa nhưng argostranslate không nạp
+  được, status sẽ nói rõ điều đó — khởi động lại app và xem server log để biết lỗi
+  gốc.
 - **Thiếu dịch offline Argos / một cặp không cài được** — mỗi cặp cài độc lập nên các
   cặp khác vẫn thành công. Cài thủ công cặp lõi:
   ```bash

@@ -39,31 +39,44 @@ class VietOCREngine(OCREngine):
 
     def _get_predictor(self):
         if self._predictor is None:
+            from config import validate_vietocr_config
             from vietocr.tool.config import Cfg
             from vietocr.tool.predictor import Predictor
 
-            # Fully Offline Implementation: Load from local config.yml
+            # Fully Offline Implementation: Load from local config.yml.
+            # Validate BEFORE handing the file to vietocr — Cfg.load_config_from_file
+            # does dict.update(yaml.safe_load(f)), so an empty/invalid file crashes
+            # with the useless "'NoneType' object is not iterable". Fail with the
+            # actual problem and the exact fix instead.
             config_path = cfg.MODEL_DIR / "vietocr" / "config.yml"
-            if not config_path.exists():
+            ok, why = validate_vietocr_config(config_path)
+            if not ok:
                 raise RuntimeError(
-                    f"VietOCR config missing at {config_path}. "
-                    "Run 'scripts/setup_offline.sh' (online, once) to download the "
-                    "weights and generate this config, or set VIETOCR_CONFIG/VIETOCR_WEIGHTS."
+                    f"VietOCR config invalid at {config_path}: {why}. "
+                    "Run 'scripts/setup_offline.sh' (online, once) to regenerate it, "
+                    "or set VIETOCR_CONFIG/VIETOCR_WEIGHTS."
                 )
-            
+
             config = Cfg.load_config_from_file(str(config_path))
-            
+
             # Use local weights and disable internet-based pretrained loading
             config["cnn"]["pretrained"] = False
             config["device"] = cfg.VIETOCR_DEVICE
             config["predictor"]["beamsearch"] = False
-            
+
             # Explicitly set local weights path
             if cfg.VIETOCR_WEIGHTS:
                 config["weights"] = cfg.VIETOCR_WEIGHTS
             else:
                 # Default to vgg_transformer.pth in the same directory
                 config["weights"] = str(cfg.MODEL_DIR / "vietocr" / "vgg_transformer.pth")
+
+            weights = str(config["weights"])
+            if not weights.startswith("http") and not Path(weights).exists():
+                raise RuntimeError(
+                    f"VietOCR weights missing at {weights}. "
+                    "Run 'scripts/setup_offline.sh' (online, once) to download them."
+                )
 
             self._predictor = Predictor(config)
         return self._predictor
@@ -91,7 +104,8 @@ class VietOCREngine(OCREngine):
 
         detector = self._get_detector()
         predictor = self._get_predictor()
-        detected = detector.predict(image_path)
+        # Paddle's predict() can return None on some inputs — never iterate None.
+        detected = detector.predict(image_path) or []
 
         items = []
         for res in detected:

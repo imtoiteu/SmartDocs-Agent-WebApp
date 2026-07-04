@@ -99,15 +99,26 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-# Now import argostranslate and patch any already-resolved paths as a safety net
+# Now import argostranslate and patch any already-resolved paths as a safety net.
+# The env vars above only work if argostranslate hasn't been imported yet; if some
+# other module (or a stale ARGOS_PACKAGES_DIR in the user's environment) made the
+# library resolve a DIFFERENT directory, setup would install into models/argos/
+# while the runtime looks elsewhere — "packages installed but model not installed".
+# So the project-local dir is forced to be AUTHORITATIVE and FIRST here, and the
+# effective search path is logged for diagnosis.
 try:
     import argostranslate.settings as _argos_settings
     _argos_settings.data_dir = cfg.ARGOS_DIR
     _argos_settings.package_data_dir = _argos_packages_dir
-    # Force Argos to not use Stanza if possible (MiniSBD fallback)
-    # However, for languages like Vietnamese, it will still try to use Stanza.
-    if _argos_packages_dir not in _argos_settings.package_dirs:
-        _argos_settings.package_dirs.insert(0, _argos_packages_dir)
+    _argos_settings.package_dirs = [_argos_packages_dir] + [
+        d for d in getattr(_argos_settings, "package_dirs", [])
+        if Path(d) != _argos_packages_dir
+    ]
+    logging.getLogger(__name__).info(
+        "[ARGOS] package dir: %s (search path: %s)",
+        _argos_packages_dir,
+        [str(d) for d in _argos_settings.package_dirs],
+    )
 except Exception as _e:
     pass   # argostranslate not installed
 
@@ -148,18 +159,48 @@ def _translate_online(text: str, from_lang: str, to_lang: str) -> str:
 
 # ── Offline (Argos Translate — local neural model) ─────────────────────────
 def _get_installed_pairs() -> set:
+    """Language pairs argostranslate can actually LOAD (not just files on disk).
+
+    A single malformed directory in the packages dir makes
+    ``get_installed_packages()`` raise (Package.__init__ requires metadata.json)
+    — log the real reason instead of silently returning an empty set.
+    """
     try:
         import argostranslate.package
         return {(p.from_code, p.to_code)
                 for p in argostranslate.package.get_installed_packages()}
-    except Exception:
+    except Exception as e:
+        logger.error(f"[ARGOS] Could not list installed packages in "
+                     f"{_argos_packages_dir}: {e}")
         return set()
+
+
+def _refresh_argos() -> None:
+    """Pick up packages installed AFTER this process imported argostranslate.
+
+    ``get_installed_languages()`` is ``functools.lru_cache``d — without clearing
+    it, packages installed by scripts/setup_offline.sh while the app is running
+    stay invisible until a full restart.
+    """
+    try:
+        import argostranslate.translate as _t
+        _t.get_installed_languages.cache_clear()
+    except Exception:
+        pass
+
+
+def _get_offline_translation(from_code: str, to_code: str):
+    """Resolve an argostranslate translation (direct OR pivot via en), or None."""
+    import argostranslate.translate as _t
+    langs = {l.code: l for l in _t.get_installed_languages()}
+    from_lang, to_lang = langs.get(from_code), langs.get(to_code)
+    if from_lang is None or to_lang is None:
+        return None
+    return from_lang.get_translation(to_lang)
 
 
 def _translate_offline(text: str, from_lang: str, to_lang: str) -> str:
     """Translate using Argos Translate (local, no internet). Raises on failure."""
-    import argostranslate.translate
-
     from_code = "en" if from_lang == "auto" else from_lang
     to_code   = to_lang
 
@@ -176,12 +217,39 @@ def _translate_offline(text: str, from_lang: str, to_lang: str) -> str:
             f"Supported codes: {', '.join(sorted(_ARGOS_CODES))}"
         )
 
+    # Resolve the translation FIRST so a missing package produces a precise
+    # message (which exact pair, what IS installed, which directory), instead of
+    # every failure collapsing into a generic "model not installed".
+    translation = _get_offline_translation(from_code, to_code)
+    if translation is None:
+        _refresh_argos()                       # packages may have just been installed
+        translation = _get_offline_translation(from_code, to_code)
+    if translation is None:
+        pairs = _get_installed_pairs()
+        installed = ", ".join(sorted(f"{f}→{t}" for f, t in pairs)) or "none"
+        on_disk = cfg._argos_installed_pairs()      # metadata.json scan, no library
+        if on_disk and not pairs:
+            raise ValueError(
+                f"Offline translation package for {from_code}→{to_code} could not be "
+                f"loaded: {len(on_disk)} package(s) exist on disk in "
+                f"{_argos_packages_dir} ({', '.join(on_disk)}) but argostranslate "
+                "failed to load them (see server log for the underlying error). "
+                "Restart the app; if it persists, re-run scripts/setup_offline.sh."
+            )
+        raise ValueError(
+            f"Offline translation package for {from_code}→{to_code} is not installed. "
+            f"Installed pairs: {installed} (package dir: {_argos_packages_dir}). "
+            "Run scripts/setup_offline.sh (online) to install it."
+        )
+
     try:
-        result = argostranslate.translate.translate(text, from_code, to_code)
+        result = translation.translate(text)
     except Exception as e:
-        logger.error(f"[ARGOS] Translation failed for {from_code}→{to_code}: {e}")
-        # Return the specific error user expects if models are truly missing
-        raise ValueError("Offline translation model not installed") from e
+        logger.exception(f"[ARGOS] Translation failed for {from_code}→{to_code}")
+        raise RuntimeError(
+            f"Offline translation failed for {from_code}→{to_code}: {e} "
+            f"(package is installed in {_argos_packages_dir}; see server log)"
+        ) from e
 
     if not result or not result.strip():
         raise RuntimeError(
@@ -255,13 +323,25 @@ def get_engine_status(force: bool = False) -> dict:
         installed_pairs = sorted(
             [f"{f}→{t}" for f, t in _get_installed_pairs()]
         )
+        # Filesystem view (metadata.json scan) — lets the UI/diagnostics tell
+        # "nothing installed" apart from "installed but the library can't load it"
+        packages_on_disk = cfg._argos_installed_pairs()
 
         _status_cache = {
-            "online":           online,
-            "offline":          offline,
-            "auto":             online or offline,
-            "installed_pairs":  installed_pairs,
+            "online":            online,
+            "offline":           offline,
+            "auto":              online or offline,
+            "installed_pairs":   installed_pairs,
+            "package_dir":       str(_argos_packages_dir),
+            "packages_on_disk":  packages_on_disk,
+            "offline_usable":    offline and bool(installed_pairs),
         }
+        if packages_on_disk and not installed_pairs:
+            _status_cache["offline_note"] = (
+                f"{len(packages_on_disk)} Argos package(s) exist on disk in "
+                f"{_argos_packages_dir} but argostranslate could not load them — "
+                "restart the app or check the server log."
+            )
         _last_probe = now
         return dict(_status_cache)
 

@@ -32,6 +32,49 @@ except ImportError:
 # ── Base directory (always the folder containing this file) ───────────────
 BASE_DIR = Path(__file__).parent.resolve()
 
+
+# ── VietOCR config.yml validation (shared) ─────────────────────────────────
+# Used by tools/setup_offline.py (post-generation validation), by
+# check_offline_readiness() (so the readiness report flags an INVALID file, not
+# just a missing one) and by the VietOCR adapter (clear runtime error instead of
+# "'NoneType' object is not iterable" — vietocr's Cfg.load_config_from_file does
+# dict.update(yaml.safe_load(f)), which crashes exactly that way on an empty or
+# non-mapping yaml file). Keys mirror what vietocr's build_model()/Predictor
+# actually reads (vietocr 0.3.13 source: tool/translate.py + tool/predictor.py).
+VIETOCR_REQUIRED_KEYS = (
+    "vocab", "device", "weights", "backbone",
+    "cnn", "transformer", "seq_modeling", "dataset", "predictor",
+)
+
+
+def validate_vietocr_config(path) -> tuple:
+    """Structurally validate a VietOCR config.yml. Returns (ok, reason).
+
+    Pure yaml — never imports vietocr/torch, safe for readiness checks.
+    Checks: file exists, parses to a NON-EMPTY mapping, every key vietocr's
+    Predictor reads is present and non-None, and the weights path (if local)
+    points at an existing file.
+    """
+    try:
+        import yaml
+        p = Path(path)
+        if not p.exists():
+            return False, "file missing"
+        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+        if raw is None:
+            return False, "file is EMPTY (yaml parses to None)"
+        if not isinstance(raw, dict) or not raw:
+            return False, f"yaml is not a mapping (got {type(raw).__name__})"
+        missing = [k for k in VIETOCR_REQUIRED_KEYS if raw.get(k) is None]
+        if missing:
+            return False, "required keys missing/None: " + ", ".join(missing)
+        w = str(raw.get("weights") or "")
+        if w and not w.startswith("http") and not Path(w).exists():
+            return False, f"weights path in config does not exist: {w}"
+        return True, "ok"
+    except Exception as e:
+        return False, f"unreadable ({e})"
+
 # ── Model directory ───────────────────────────────────────────────────────
 # Default: web_app/models/  (portable, offline-ready)
 # Override: set MODEL_DIR=/absolute/path in .env
@@ -91,10 +134,18 @@ def _configure_hf_env(model_dir: Path):
     # Argos Translate: MUST be set before argostranslate is imported.
     # argostranslate reads ARGOS_PACKAGES_DIR at module import time to build
     # its package_dirs list — setting settings.data_dir after import does nothing.
+    # HARD-set (not setdefault): a stale ARGOS_PACKAGES_DIR inherited from the
+    # user's shell would make setup install into models/argos/ while the runtime
+    # loads from somewhere else ("packages installed but model not installed").
+    # The project-local dir is the single supported location; relocate it via
+    # MODEL_DIR in .env, which this path derives from.
     argos_packages = model_dir / "argos" / "packages"
     argos_packages.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("ARGOS_PACKAGES_DIR",          str(argos_packages))
-    os.environ.setdefault("ARGOS_TRANSLATE_PACKAGE_DIR", str(argos_packages))  # legacy
+    if os.environ.get("ARGOS_PACKAGES_DIR") not in ("", None, str(argos_packages)):
+        logger.warning(f"[Config] Overriding inherited ARGOS_PACKAGES_DIR="
+                       f"{os.environ.get('ARGOS_PACKAGES_DIR')} → {argos_packages}")
+    os.environ["ARGOS_PACKAGES_DIR"]          = str(argos_packages)
+    os.environ["ARGOS_TRANSLATE_PACKAGE_DIR"] = str(argos_packages)  # legacy
 
     # Offline mode: never attempt downloads if OFFLINE=1 in .env
     offline = os.environ.get("OFFLINE", "1")   # default ON (local-first)
@@ -513,9 +564,10 @@ class _Config:
                          else self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR, include_default_cache=True))
 
         setup = "run scripts/setup_offline.sh (online)"
+        vcfg_ok, vcfg_why = validate_vietocr_config(vietocr_cfg)
         return {
-            "vietocr_config": (vietocr_cfg.exists(),
-                               str(vietocr_cfg) + ("" if vietocr_cfg.exists() else f"  ← MISSING ({setup})")),
+            "vietocr_config": (vcfg_ok,
+                               str(vietocr_cfg) + ("" if vcfg_ok else f"  ← {vcfg_why} ({setup})")),
             "vietocr_weights": (vietocr_wts.exists(),
                                 str(vietocr_wts) + ("" if vietocr_wts.exists() else f"  ← MISSING ({setup})")),
             "chat_primary":  (chat_primary,  self.CHAT_MODEL          + ("" if chat_primary  else f"  ← MISSING ({setup})")),

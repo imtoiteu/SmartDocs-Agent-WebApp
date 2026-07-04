@@ -125,6 +125,19 @@ layout model is the one exception checked in the default `~/.cache/huggingface`.
 - **"No chat model could be loaded" but the check said ✅ previously** — you were
   on the old check that only tested directory existence. Re-pull, re-run
   `check_offline.sh`; if it now shows the Local LLM missing, run `setup_offline.py`.
+- **VietOCR fails with `'NoneType' object is not iterable`** — the old symptom of an
+  **empty or invalid** `models/vietocr/config.yml` (vietocr's config loader crashes
+  that way on a file that parses to nothing). `scripts/setup_offline.sh` now
+  validates an existing config.yml and **regenerates** it (backup: `config.yml.bak`)
+  using vietocr's own `Cfg.load_config_from_name()`, then verifies the result by
+  actually instantiating the Predictor. The runtime and `check_offline.sh` also
+  validate content now — an invalid file reports the precise reason, never ✅.
+- **"Offline translation … not installed" while packages exist on disk** — the
+  error and `/api/translate/status` now name the exact missing pair, the installed
+  pairs, and the package directory (`models/argos/packages`). If packages exist on
+  disk but argostranslate can't load them, the status says so explicitly — restart
+  the app (or hit the status endpoint) and check the server log for the underlying
+  loader error.
 - **Argos offline translation missing / a pair won't install** — each pair installs
   independently, so others still succeed. Install the core pair manually:
   ```bash

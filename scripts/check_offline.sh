@@ -65,6 +65,87 @@ if ! ( cd "$REPO_ROOT" && "$PY" -c 'from config import cfg; print(cfg.offline_re
   warn "(Needs the main venv deps installed — run scripts/setup.sh.)"
 fi
 
+# --- VietOCR deep validation --------------------------------------------------
+# The matrix above already validates config.yml STRUCTURE (via config.py).
+# This goes further: imports vietocr's Predictor, loads config.yml through the
+# real Cfg.load_config_from_file() runtime path, and cross-checks the weights
+# path inside the config — catching an empty/half-written config.yml that mere
+# file-existence checks reported as ✅.
+hr
+if "$PY" -c 'import vietocr' >/dev/null 2>&1; then
+  VIETOCR_CHECK="$(cd "$REPO_ROOT" && "$PY" - 2>&1 <<'PYEOF'
+import sys
+sys.path.insert(0, ".")
+from pathlib import Path
+from config import cfg, validate_vietocr_config
+p = cfg.MODEL_DIR / "vietocr" / "config.yml"
+ok, why = validate_vietocr_config(p)
+if not ok:
+    print(f"INVALID: {why}")
+    sys.exit(1)
+from vietocr.tool.predictor import Predictor          # noqa: F401 (import must work)
+from vietocr.tool.config import Cfg
+c = Cfg.load_config_from_file(str(p))
+missing = [k for k in ("vocab","device","weights","backbone","cnn","transformer","seq_modeling","dataset","predictor") if c.get(k) is None]
+if missing:
+    print("INVALID: keys None after load: " + ", ".join(missing))
+    sys.exit(1)
+w = str(cfg.VIETOCR_WEIGHTS or c.get("weights") or "")
+if not w.startswith("http") and not Path(w).exists():
+    print(f"INVALID: weights not found: {w}")
+    sys.exit(1)
+print("config.yml loads via Cfg + Predictor importable + weights present")
+PYEOF
+)"
+  if [ $? -eq 0 ]; then
+    ok  "VietOCR deep check    : $VIETOCR_CHECK"
+  else
+    warn "VietOCR deep check    : $VIETOCR_CHECK — run scripts/setup_offline.sh (online)"
+  fi
+else
+  info "VietOCR deep check    : skipped (vietocr not importable in main venv)"
+fi
+
+# --- Argos runtime validation --------------------------------------------------
+# The matrix above counts packages via metadata.json on disk. This additionally
+# loads them through ARGOSTRANSLATE ITSELF — the exact runtime path — so a
+# "files on disk but library can't load them" mismatch is caught here, not in the
+# translation UI. Offline-safe (no index update, no downloads, 10s socket cap).
+if "$PY" -c 'import argostranslate' >/dev/null 2>&1; then
+  ARGOS_RT="$(cd "$REPO_ROOT" && "$PY" - 2>&1 <<'PYEOF'
+import socket, sys
+sys.path.insert(0, ".")
+socket.setdefaulttimeout(10)              # fail fast if anything touches the net
+from config import cfg                    # sets ARGOS_PACKAGES_DIR before argos import
+pkg_dir = cfg.ARGOS_DIR / "packages"
+on_disk = cfg._argos_installed_pairs()
+try:
+    import argostranslate.settings as s
+    from pathlib import Path
+    s.data_dir = cfg.ARGOS_DIR
+    s.package_data_dir = pkg_dir
+    s.package_dirs = [pkg_dir] + [d for d in getattr(s, "package_dirs", []) if Path(d) != pkg_dir]
+    import argostranslate.package as ap
+    loadable = sorted(f"{p.from_code}→{p.to_code}" for p in ap.get_installed_packages())
+except Exception as e:
+    print(f"LIBRARY ERROR in {pkg_dir}: {e}")
+    sys.exit(1)
+if on_disk and not loadable:
+    print(f"MISMATCH: {len(on_disk)} package(s) on disk in {pkg_dir} but argostranslate loads NONE")
+    sys.exit(1)
+print(f"{len(loadable)} pair(s) loadable from {pkg_dir}: {', '.join(loadable) or 'none'}")
+PYEOF
+)"
+  if [ $? -eq 0 ]; then
+    ok  "Argos runtime check  : $ARGOS_RT"
+  else
+    warn "Argos runtime check  : $ARGOS_RT"
+    warn "  (runtime translation will fail the same way — check the server log / re-run scripts/setup_offline.sh)"
+  fi
+else
+  info "Argos runtime check  : skipped (argostranslate not importable in main venv)"
+fi
+
 # --- GLM venvs (optional, Apple Silicon) ------------------------------------
 hr
 info "GLM OCR (optional):"

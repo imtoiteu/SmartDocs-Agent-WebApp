@@ -210,45 +210,44 @@ try:
         print(f"  Downloading {weight_path.name} (~160 MB)…")
         urllib.request.urlretrieve(url, str(weight_path))
 
-    # ── Generate models/vietocr/config.yml (OFFLINE) ──────────────────────────
+    # ── Generate models/vietocr/config.yml (via the library's own loader) ─────
     # The adapter (services/ocr_engines/vietocr_adapter.py) loads a LOCAL
-    # config.yml on purpose — vietocr's Cfg.load_config_from_name() may hit the
-    # network. We build it here from the yaml files BUNDLED inside the installed
-    # vietocr package (no internet), merging base.yml + the architecture yaml.
+    # config.yml on purpose so the RUNTIME never touches the network. Here (setup,
+    # online) we build it with vietocr's canonical Cfg.load_config_from_name(),
+    # which fetches base.yml + the arch yaml from vocr.vn — the same host the
+    # weights come from. NOTE: vietocr 0.3.13 bundles NO yaml files in the wheel,
+    # so there is no offline source for this config; it must be fetched here.
+    #
+    # An EXISTING config.yml is no longer trusted blindly: an empty/invalid file
+    # (yaml → None/non-dict, or required keys missing) made the runtime crash with
+    # "'NoneType' object is not iterable" (Cfg.load_config_from_file does
+    # dict.update(yaml.safe_load(f))). Validate, and regenerate when broken.
+    from config import validate_vietocr_config
+
     config_yml = vietocr_dir / "config.yml"
-    if config_yml.exists():
-        print(f"  ✓ {config_yml.name} already present")
+    cfg_ok, cfg_why = validate_vietocr_config(config_yml)
+    if cfg_ok:
+        print(f"  ✓ {config_yml.name} already present and valid")
     else:
+        if config_yml.exists():
+            backup = config_yml.with_suffix(".yml.bak")
+            config_yml.replace(backup)
+            print(f"  ⚠️  Existing {config_yml.name} is INVALID ({cfg_why}) — backed up to {backup.name}, regenerating")
         try:
-            import yaml, vietocr
-            pkg_cfg = Path(vietocr.__file__).parent / "config"
+            from vietocr.tool.config import Cfg as _VCfg
             arch = cfg.VIETOCR_CONFIG                       # e.g. "vgg_transformer"
-            base_f = pkg_cfg / "base.yml"
-            # vietocr ships the arch file with a hyphen: vgg-transformer.yml
-            arch_f = pkg_cfg / f"{arch.replace('_', '-')}.yml"
-            if not arch_f.exists():
-                arch_f = pkg_cfg / f"{arch}.yml"
-            if base_f.exists() and arch_f.exists():
-                merged = yaml.safe_load(base_f.read_text(encoding="utf-8")) or {}
-                over = yaml.safe_load(arch_f.read_text(encoding="utf-8")) or {}
-                # shallow-merge, then one level deep for nested dicts (cnn/transformer/…)
-                for k, v in over.items():
-                    if isinstance(v, dict) and isinstance(merged.get(k), dict):
-                        merged[k].update(v)
-                    else:
-                        merged[k] = v
-                # Offline, local-weights defaults (the adapter re-asserts these too)
-                merged.setdefault("cnn", {})["pretrained"] = False
-                merged["weights"] = str(weight_path)
-                merged["device"] = cfg.VIETOCR_DEVICE
-                merged.setdefault("predictor", {})["beamsearch"] = False
-                config_yml.write_text(yaml.safe_dump(merged, allow_unicode=True, sort_keys=False),
-                                      encoding="utf-8")
-                print(f"  ✅ Wrote {config_yml} (from bundled {arch_f.name})")
-            else:
-                print(f"  ⚠️  Could not find bundled vietocr configs in {pkg_cfg} — "
-                      f"config.yml NOT generated. VietOCR OCR will be unavailable.")
-                errors.append("VietOCR: bundled package configs not found; config.yml missing")
+            print(f"  ↓ Fetching vietocr '{arch}' config via Cfg.load_config_from_name()…")
+            vcfg = _VCfg.load_config_from_name(arch)
+            # Only the necessary local/offline overrides — nested fields stay
+            # exactly as the library delivered them.
+            vcfg["weights"] = str(weight_path)
+            vcfg["device"] = cfg.VIETOCR_DEVICE
+            if isinstance(vcfg.get("cnn"), dict) and "pretrained" in vcfg["cnn"]:
+                vcfg["cnn"]["pretrained"] = False
+            if isinstance(vcfg.get("predictor"), dict):
+                vcfg["predictor"]["beamsearch"] = False
+            vcfg.save(str(config_yml))                       # library-canonical dump
+            print(f"  ✅ Wrote {config_yml}")
         except Exception as e:
             print(f"  ⚠️  Could not generate config.yml: {e}")
             if isinstance(e, ImportError):
@@ -256,7 +255,32 @@ try:
                 print("     means the wrong Python. Use scripts/setup_offline.sh.")
             errors.append(f"VietOCR config.yml: {e}")
 
-    print("  ✅ VietOCR ready")
+    # ── Post-generation validation: reload from disk exactly like the runtime ──
+    # 1) structural: parse + required keys non-None + weights file resolves
+    # 2) functional: Cfg.load_config_from_file + Predictor(config) — the real
+    #    runtime path (loads the .pth once; slow but definitive, setup-time only).
+    val_ok, val_why = validate_vietocr_config(config_yml)
+    if not val_ok:
+        print(f"  ❌ config.yml validation FAILED: {val_why}")
+        errors.append(f"VietOCR config.yml invalid after generation: {val_why}")
+    elif not weight_path.exists():
+        print(f"  ❌ weights missing: {weight_path}")
+        errors.append(f"VietOCR weights missing: {weight_path}")
+    else:
+        try:
+            from vietocr.tool.config import Cfg as _VCfg
+            from vietocr.tool.predictor import Predictor as _VPredictor
+            _rt = _VCfg.load_config_from_file(str(config_yml))
+            _rt["device"] = "cpu"                    # validation itself always on CPU
+            _rt["predictor"]["beamsearch"] = False
+            print("  Validating: instantiating Predictor from the generated config…")
+            _VPredictor(_rt)
+            print("  ✅ VietOCR config + weights validated (Predictor loads)")
+        except Exception as e:
+            print(f"  ❌ Predictor validation FAILED: {e}")
+            errors.append(f"VietOCR Predictor validation: {e}")
+
+    print("  ✅ VietOCR step finished")
 except Exception as e:
     print(f"  ❌ Failed: {e}")
     errors.append(f"VietOCR: {e}")
@@ -285,14 +309,23 @@ ARGOS_PAIRS = [
     ("en", "es"), ("es", "en"),
 ]
 try:
+    import socket
     import argostranslate.settings as _as
     import argostranslate.package
 
-    # Patch runtime state (safety net)
+    # Patch runtime state (safety net) — same authoritative-first ordering the
+    # runtime (services/translate_service.py) uses, so install + runtime + checks
+    # all agree on models/argos/packages.
     _as.data_dir = ARGOS_DIR
     _as.package_data_dir = _argos_packages_dir
-    if _argos_packages_dir not in _as.package_dirs:
-        _as.package_dirs.insert(0, _argos_packages_dir)
+    _as.package_dirs = [_argos_packages_dir] + [
+        d for d in getattr(_as, "package_dirs", []) if Path(d) != _argos_packages_dir
+    ]
+    print(f"  Package dir: {_argos_packages_dir}")
+
+    # Fail fast instead of hanging forever on a stalled index/download connection.
+    _prev_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(120)
 
     print("  Fetching package index…")
     argostranslate.package.update_package_index()
@@ -300,7 +333,6 @@ try:
     installed = {(p.from_code, p.to_code) for p in argostranslate.package.get_installed_packages()}
 
     downloaded = 0
-    failed_pairs = []
     for from_code, to_code in ARGOS_PAIRS:
         if (from_code, to_code) in installed:
             print(f"  ✓ {from_code}→{to_code} already installed")
@@ -317,16 +349,18 @@ try:
             downloaded += 1
         except Exception as e:
             print(f"  ❌ {from_code}→{to_code} failed: {e}")
-            failed_pairs.append(f"{from_code}→{to_code}")
 
-    print(f"  ✅ Argos: {downloaded} new package(s) installed to {_argos_packages_dir}")
-    # Only surface a hard error if the CORE en↔vi pair could not be made available.
-    core_ok = all(
-        (fc, tc) in installed or f"{fc}→{tc}" not in failed_pairs
-        for fc, tc in (("en", "vi"), ("vi", "en"))
-    )
-    if not core_ok:
-        errors.append("Argos: core en↔vi pair failed to install "
+    socket.setdefaulttimeout(_prev_timeout)
+
+    # Post-install verification through the LIBRARY (not just files on disk) —
+    # exactly what the runtime will do. Catches "files written but not loadable".
+    final_pairs = sorted(f"{p.from_code}→{p.to_code}"
+                         for p in argostranslate.package.get_installed_packages())
+    print(f"  ✅ Argos: {downloaded} new package(s); loadable now: "
+          f"{', '.join(final_pairs) or 'NONE'}  (dir: {_argos_packages_dir})")
+    # Only surface a hard error if the CORE en↔vi pair is not loadable.
+    if not {"en→vi", "vi→en"}.issubset(set(final_pairs)):
+        errors.append("Argos: core en↔vi pair not loadable after install "
                       "(manual: `argospm install translate-en_vi` / `translate-vi_en`, "
                       f"or drop the .argosmodel into {_argos_packages_dir})")
 except ImportError as e:
