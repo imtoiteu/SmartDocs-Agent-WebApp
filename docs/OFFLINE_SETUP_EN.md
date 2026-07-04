@@ -94,6 +94,37 @@ model is cached. It changes nothing.
 
 `scripts/check.sh` covers the runtime/venv side and points here for the model matrix.
 
+The readiness check is **completeness-aware**: a model counts as ready only when a
+full HF snapshot (config + weights) resolves in the app's cache
+(`models/huggingface/`) — a half-finished or aborted download reports **missing**,
+not ✅, so the check can't disagree with what the app can actually load. (The GLM
+layout model is the one exception checked in the default `~/.cache/huggingface`.)
+
+---
+
+## Troubleshooting
+
+- **`check_offline.sh` shows a required model missing right after setup** — the
+  download was interrupted (or a hard crash aborted `setup_offline.py` mid-run).
+  Just re-run it; completed assets are skipped:
+  ```bash
+  python tools/setup_offline.py
+  ```
+  `setup_offline.py` runs the crash-prone PaddleOCR step **last**, so VietOCR,
+  Argos and the Qwen/PhoBERT/embedding models are already on disk even if Paddle
+  misbehaves on that machine.
+- **"No chat model could be loaded" but the check said ✅ previously** — you were
+  on the old check that only tested directory existence. Re-pull, re-run
+  `check_offline.sh`; if it now shows the Local LLM missing, run `setup_offline.py`.
+- **Argos offline translation missing / a pair won't install** — each pair installs
+  independently, so others still succeed. Install the core pair manually:
+  ```bash
+  argospm install translate-en_vi
+  argospm install translate-vi_en
+  # …or drop the .argosmodel files into models/argos/packages/
+  ```
+  Online Google translate keeps working regardless.
+
 ---
 
 ## Fully offline afterwards

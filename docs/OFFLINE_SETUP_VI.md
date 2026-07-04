@@ -91,6 +91,36 @@ hay chưa. Script không thay đổi gì.
 
 `scripts/check.sh` lo phần runtime/venv và trỏ sang đây cho ma trận mô hình.
 
+Bản kiểm tra **nhận biết tính đầy đủ**: một mô hình chỉ được coi là sẵn sàng khi có
+snapshot HF hoàn chỉnh (config + weights) trong cache của ứng dụng
+(`models/huggingface/`) — tải dở hoặc bị hủy giữa chừng sẽ báo **thiếu**, không phải
+✅, nên kết quả kiểm tra luôn khớp với những gì ứng dụng thực sự nạp được. (Mô hình
+layout GLM là ngoại lệ, được kiểm tra trong cache mặc định `~/.cache/huggingface`.)
+
+---
+
+## Khắc phục sự cố
+
+- **`check_offline.sh` báo thiếu mô hình bắt buộc ngay sau khi cài** — quá trình tải
+  bị gián đoạn (hoặc một sự cố crash làm `setup_offline.py` dừng giữa chừng). Chỉ cần
+  chạy lại; các phần đã xong sẽ được bỏ qua:
+  ```bash
+  python tools/setup_offline.py
+  ```
+  `setup_offline.py` chạy bước PaddleOCR (dễ crash) **sau cùng**, nên VietOCR, Argos
+  và các mô hình Qwen/PhoBERT/embedding đã nằm trên đĩa ngay cả khi Paddle gặp lỗi.
+- **"No chat model could be loaded" dù trước đó báo ✅** — đó là bản kiểm tra cũ chỉ
+  xét sự tồn tại thư mục. Cập nhật lại mã, chạy lại `check_offline.sh`; nếu giờ báo
+  thiếu Local LLM, chạy `setup_offline.py`.
+- **Thiếu dịch offline Argos / một cặp không cài được** — mỗi cặp cài độc lập nên các
+  cặp khác vẫn thành công. Cài thủ công cặp lõi:
+  ```bash
+  argospm install translate-en_vi
+  argospm install translate-vi_en
+  # …hoặc bỏ file .argosmodel vào models/argos/packages/
+  ```
+  Dịch Google online vẫn hoạt động bình thường.
+
 ---
 
 ## Sau khi đã chuẩn bị: chạy hoàn toàn offline

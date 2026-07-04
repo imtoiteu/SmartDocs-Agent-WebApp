@@ -63,9 +63,9 @@ for _m in (cfg.QWEN_MODEL, cfg.CHAT_MODEL, cfg.FALLBACK_CHAT_MODEL):
     if _m and _m not in _qwen_models:
         _qwen_models.append(_m)
 if len(_qwen_models) == 1:
-    print(f"\n[1/5] Local LLM (default) — {_qwen_models[0]}  [chat + rewrite + agent]")
+    print(f"\n[1/6] Local LLM (default) — {_qwen_models[0]}  [chat + rewrite + agent]")
 else:
-    print(f"\n[1/5] Local LLMs — {', '.join(_qwen_models)}  (extra model(s) from .env opt-in)")
+    print(f"\n[1/6] Local LLMs — {', '.join(_qwen_models)}  (extra model(s) from .env opt-in)")
 try:
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -87,7 +87,7 @@ except ImportError as e:
 # ══════════════════════════════════════════════════════════════════════════════
 #  2. PhoBERT (Vietnamese summarization)
 # ══════════════════════════════════════════════════════════════════════════════
-print(f"\n[2/5] PhoBERT — {cfg.PHOBERT_MODEL}")
+print(f"\n[2/6] PhoBERT — {cfg.PHOBERT_MODEL}")
 try:
     from transformers import AutoTokenizer, AutoModel
 
@@ -106,13 +106,13 @@ except Exception as e:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  2b. sentence-transformers (semantic embeddings for document chat / RAG)
+#  3. sentence-transformers (semantic embeddings for document chat / RAG)
 # ══════════════════════════════════════════════════════════════════════════════
 # Without this, AI Chat retrieval falls back to char-n-gram hashing (works, but
 # can't match paraphrases). Caching it here enables real semantic retrieval offline.
 # Keep in sync with EmbeddingEngine.SBERT_MODEL in services/chat_service.py.
 _SBERT_ID = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-print(f"\n[2b] Embeddings — {_SBERT_ID}")
+print(f"\n[3/6] Embeddings (optional; hashing fallback if skipped) — {_SBERT_ID}")
 try:
     from sentence_transformers import SentenceTransformer
 
@@ -127,49 +127,10 @@ except Exception as e:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  3. PaddleOCR (runs its own download on first predict() call)
+#  4. VietOCR models  (pure download — no torch/paddle; run BEFORE PaddleOCR so a
+#     Paddle segfault can never block config.yml/weights generation)
 # ══════════════════════════════════════════════════════════════════════════════
-print("\n[3/5] PaddleOCR models")
-try:
-    import numpy as np
-    from PIL import Image, ImageDraw
-
-    # Create a small test image to force model download
-    img = Image.new("RGB", (200, 60), color=(255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    draw.text((10, 20), "SmartDocs test", fill=(0, 0, 0))
-    test_img = MODELS_DIR / "_paddle_setup_test.png"
-    img.save(str(test_img))
-
-    print("  Initializing PaddleOCR (downloads models on first use)…")
-    # Stability: this script has already loaded torch/transformers above, and
-    # PaddlePaddle installs a Google-glog FailureSignalHandler that hijacks
-    # SIGSEGV/SIGABRT. With torch + paddle sharing one process (as here and in the
-    # Flask app), that handler can turn a benign worker-thread condition into a
-    # fatal crash while it symbolizes a stack (observed in a macOS .ips: libpaddle
-    # FailureSignalHandler → SymbolizeAndDemangle). Disabling it lets Python handle
-    # signals normally. Best-effort; never fatal if the API is unavailable.
-    try:
-        import paddle
-        paddle.disable_signal_handler()
-    except Exception:
-        pass
-    from paddleocr import PaddleOCR
-    ocr = PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False)
-    ocr.predict(str(test_img))
-    test_img.unlink(missing_ok=True)
-    print("  ✅ PaddleOCR ready")
-except Exception as e:
-    if test_img.exists():
-        test_img.unlink(missing_ok=True)
-    print(f"  ❌ Failed: {e}")
-    errors.append(f"PaddleOCR: {e}")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  4. VietOCR models
-# ══════════════════════════════════════════════════════════════════════════════
-print("\n[4/5] VietOCR models")
+print("\n[4/6] VietOCR models")
 try:
     import urllib.request
     vietocr_dir = MODELS_DIR / "vietocr"
@@ -235,16 +196,18 @@ except Exception as e:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  5. Argos Translate packages
+#  5. Argos Translate packages  (pure download — also before PaddleOCR)
 # ══════════════════════════════════════════════════════════════════════════════
 _argos_packages_dir = ARGOS_DIR / "packages"
 _argos_packages_dir.mkdir(parents=True, exist_ok=True)
-print(f"\n[5/5] Argos Translate offline packages → {_argos_packages_dir}")
+print(f"\n[5/6] Argos Translate offline packages → {_argos_packages_dir}")
 
 # Must set env var BEFORE importing argostranslate (it reads it at import time)
 os.environ["ARGOS_PACKAGES_DIR"] = str(_argos_packages_dir)
 os.environ["ARGOS_TRANSLATE_PACKAGE_DIR"] = str(_argos_packages_dir)
 
+# en↔vi is the CORE pair (listed first); the rest are best-effort extras. Each pair
+# installs independently so one failed/absent package never blocks the others.
 ARGOS_PAIRS = [
     ("en", "vi"), ("vi", "en"),
     ("en", "zh"), ("zh", "en"),
@@ -270,24 +233,84 @@ try:
     installed = {(p.from_code, p.to_code) for p in argostranslate.package.get_installed_packages()}
 
     downloaded = 0
+    failed_pairs = []
     for from_code, to_code in ARGOS_PAIRS:
         if (from_code, to_code) in installed:
             print(f"  ✓ {from_code}→{to_code} already installed")
             continue
         pkg = next((p for p in available if p.from_code == from_code and p.to_code == to_code), None)
-        if pkg:
+        if not pkg:
+            print(f"  ⚠️  Package {from_code}→{to_code} not available in index")
+            continue
+        # Per-package guard: a single download/install failure must not abort the
+        # remaining pairs (esp. the core en↔vi pair listed first).
+        try:
             print(f"  ↓ Installing {from_code}→{to_code}…")
             argostranslate.package.install_from_path(pkg.download())
             downloaded += 1
-        else:
-            print(f"  ⚠️  Package {from_code}→{to_code} not available in index")
+        except Exception as e:
+            print(f"  ❌ {from_code}→{to_code} failed: {e}")
+            failed_pairs.append(f"{from_code}→{to_code}")
 
-    print(f"  ✅ Argos ready ({downloaded} new packages installed to {_argos_packages_dir})")
+    print(f"  ✅ Argos: {downloaded} new package(s) installed to {_argos_packages_dir}")
+    # Only surface a hard error if the CORE en↔vi pair could not be made available.
+    core_ok = all(
+        (fc, tc) in installed or f"{fc}→{tc}" not in failed_pairs
+        for fc, tc in (("en", "vi"), ("vi", "en"))
+    )
+    if not core_ok:
+        errors.append("Argos: core en↔vi pair failed to install "
+                      "(manual: `argospm install translate-en_vi` / `translate-vi_en`, "
+                      f"or drop the .argosmodel into {_argos_packages_dir})")
 except ImportError as e:
     print(f"  ⚠️  Skipped (missing library): {e}")
+    print("     Manual install: pip install argostranslate, then re-run this script.")
 except Exception as e:
     print(f"  ❌ Failed: {e}")
+    print(f"     Manual fallback: `argospm install translate-en_vi` and `translate-vi_en`, "
+          f"or place .argosmodel files in {_argos_packages_dir}.")
     errors.append(f"Argos: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  6. PaddleOCR — LAST on purpose.
+#     This script has already loaded torch/transformers (Qwen/PhoBERT steps), and
+#     PaddlePaddle installs a Google-glog FailureSignalHandler that hijacks
+#     SIGSEGV/SIGABRT. With torch + paddle sharing one process, that handler can
+#     turn a benign worker-thread condition into a FATAL crash while symbolizing a
+#     stack (observed in a macOS .ips: libpaddle FailureSignalHandler →
+#     SymbolizeAndDemangle). Running Paddle LAST means even a hard crash here leaves
+#     the Qwen/PhoBERT/embeddings/VietOCR/Argos assets already on disk. We also call
+#     paddle.disable_signal_handler() first so Python handles signals normally.
+#     Best-effort; never fatal if the API is unavailable.
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n[6/6] PaddleOCR models  (downloads on first predict(); run last for stability)")
+test_img = MODELS_DIR / "_paddle_setup_test.png"
+try:
+    from PIL import Image, ImageDraw
+
+    # Create a small test image to force model download
+    img = Image.new("RGB", (200, 60), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.text((10, 20), "SmartDocs test", fill=(0, 0, 0))
+    img.save(str(test_img))
+
+    print("  Initializing PaddleOCR (downloads models on first use)…")
+    try:
+        import paddle
+        paddle.disable_signal_handler()
+    except Exception:
+        pass
+    from paddleocr import PaddleOCR
+    ocr = PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False)
+    ocr.predict(str(test_img))
+    test_img.unlink(missing_ok=True)
+    print("  ✅ PaddleOCR ready")
+except Exception as e:
+    if test_img.exists():
+        test_img.unlink(missing_ok=True)
+    print(f"  ❌ Failed: {e}")
+    errors.append(f"PaddleOCR: {e}")
 
 
 
@@ -311,6 +334,39 @@ else:
     print("    run_windows.bat      (Windows)")
 print("=" * 60)
 print()
+
+# ── Post-setup readiness snapshot (same source of truth as check_offline.sh) ──
+# Verifies what is ACTUALLY on disk now (completeness-checked, not just "downloaded
+# without error"), and prints the exact re-run command if a required asset is short.
+try:
+    import importlib
+    import config as _cfgmod
+    importlib.reload(_cfgmod)          # pick up files written during this run
+    _c = _cfgmod.cfg
+    r = _c.check_offline_readiness()
+    required = {
+        "VietOCR config.yml":            r["vietocr_config"],
+        "VietOCR weights":               r["vietocr_weights"],
+        "Local LLM (chat/rewrite/agent)":r["ai_rewrite"],
+    }
+    optional = {
+        "Embeddings (RAG, fallback OK)":  r["embeddings"],
+        "Argos offline translate":        r["argos"],
+        "PhoBERT summarize (fallback OK)":r["phobert"],
+    }
+    print("  ── Readiness after setup ────────────────────────")
+    for label, (okflag, _detail) in required.items():
+        print(f"   {'✅' if okflag else '❌'} {label}")
+    for label, (okflag, _detail) in optional.items():
+        print(f"   {'✅' if okflag else '⚠️ '} {label}")
+    missing_required = [k for k, (okflag, _d) in required.items() if not okflag]
+    if missing_required:
+        print()
+        print("  ❗ Required asset(s) still missing: " + ", ".join(missing_required))
+        print("     Re-run online:  python tools/setup_offline.py")
+    print()
+except Exception as e:
+    print(f"  (readiness snapshot skipped: {e})")
 
 # Show disk usage
 try:

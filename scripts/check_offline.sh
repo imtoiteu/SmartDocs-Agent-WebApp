@@ -8,10 +8,11 @@
 #    * main SmartDocs Python path/version + Pillow version + VietOCR import
 #    * VietOCR config.yml + weights           (models/vietocr/)
 #    * Paddle det/rec cache                    (first-run download otherwise)
-#    * Chat model primary + fallback           (Qwen 3B / 1.5B in HF cache)
-#    * AI Rewrite model                        (Qwen rewrite in HF cache)
+#    * Local LLM (chat/rewrite/agent)          (Qwen2.5-1.5B-Instruct REQUIRED;
+#                                               a complete HF snapshot, not a
+#                                               half-download — 3B is NOT required)
 #    * PhoBERT + embeddings                    (fallbacks exist if missing)
-#    * Argos offline translation packages
+#    * Argos offline translation packages      (installed language pairs listed)
 #    * GLM .venv-mlx / .venv-sdk               (imports)
 #    * GLM self-hosted config: pipeline.layout.model_dir present?
 #    * GLM layout model cached in the DEFAULT HF cache?

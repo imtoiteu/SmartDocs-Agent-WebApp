@@ -395,17 +395,25 @@ class _Config:
         return results
 
     # ── Comprehensive offline-readiness probe (feature-level) ────────────────
-    def _hf_cache_dir_for(self, model_id: str):
+    def _hf_cache_dir_for(self, model_id: str, include_default_cache: bool = False):
         """Return the first HF cache dir that holds ``model_id`` (or None).
 
-        Checks BOTH the app's redirected cache (models/huggingface/, where Qwen /
-        PhoBERT / sentence-transformers live) AND the DEFAULT ~/.cache/huggingface
-        cache. The GLM layout model is deliberately kept in the default cache
+        By DEFAULT this searches ONLY the app's redirected cache
+        (``models/huggingface/``) — the exact place the running app loads models
+        from, because importing ``config`` sets ``HF_HOME`` there. Reporting a model
+        found in the user's DEFAULT ``~/.cache/huggingface`` as "ready" would be a
+        false positive: the app (with HF_HOME redirected) can't load it, which is
+        precisely the "check shows ✅ but the app says not-in-cache" symptom.
+
+        ``include_default_cache=True`` also searches ``~/.cache/huggingface`` — used
+        ONLY for the GLM layout model, which deliberately lives in the default cache
         because glm_adapter.py strips HF_HOME before shelling out to glmocr.
         """
         name = "models--" + model_id.replace("/", "--")
-        default_hub = Path.home() / ".cache" / "huggingface" / "hub"
-        for root in (self.HF_DIR, self.HF_DIR / "hub", default_hub):
+        roots = [self.HF_DIR, self.HF_DIR / "hub"]
+        if include_default_cache:
+            roots.append(Path.home() / ".cache" / "huggingface" / "hub")
+        for root in roots:
             try:
                 if root.exists():
                     hit = next(iter(root.glob(name + "*")), None)
@@ -415,8 +423,70 @@ class _Config:
                 pass
         return None
 
-    def _has_hf_model(self, model_id: str) -> bool:
-        return self._hf_cache_dir_for(model_id) is not None
+    # Weight-file extensions that mark a genuinely downloaded model (not just a
+    # tokenizer/config-only partial). Any ONE resolving file of these is enough.
+    _WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".pdparams",
+                        ".msgpack", ".gguf", ".onnx", ".ckpt")
+
+    def _hf_snapshot_complete(self, model_root) -> bool:
+        """A located ``models--*`` dir is only USABLE offline if a snapshot revision
+        holds a RESOLVING ``config.json`` AND at least one RESOLVING weight file.
+
+        HF stores each file in a snapshot as a symlink into ``blobs/``. An aborted
+        or partial download leaves DANGLING symlinks, and ``Path.exists()`` (which
+        follows the link) returns False for a missing blob. Checking mere directory
+        existence — as the old code did — reported a half-downloaded model as ready
+        (the "check_offline shows ✅ but the app can't load it" bug). This inspects
+        actual resolvable content instead. Filesystem-only; never raises.
+        """
+        try:
+            snap_root = Path(model_root) / "snapshots"
+            revs = [p for p in snap_root.iterdir() if p.is_dir()] if snap_root.is_dir() else []
+            # Fallback: some caches / raw local dirs store files flat (no snapshots/).
+            search_dirs = revs or [Path(model_root)]
+            for d in search_dirs:
+                has_cfg = (d / "config.json").exists()
+                has_weight = any(
+                    p.suffix.lower() in self._WEIGHT_SUFFIXES and p.exists()
+                    for p in d.glob("*")
+                )
+                if has_cfg and has_weight:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _has_hf_model(self, model_id: str, include_default_cache: bool = False) -> bool:
+        d = self._hf_cache_dir_for(model_id, include_default_cache=include_default_cache)
+        return d is not None and self._hf_snapshot_complete(d)
+
+    def _argos_installed_pairs(self) -> list:
+        """List installed Argos language pairs as ``from→to`` strings (sorted).
+
+        Filesystem-only: reads each ``packages/*/metadata.json`` (which carries
+        ``from_code``/``to_code``); falls back to the package dir name if metadata
+        is absent. Never imports argostranslate, never touches the network.
+        """
+        import json
+        pairs = []
+        pkgs = self.ARGOS_DIR / "packages"
+        if not pkgs.is_dir():
+            return pairs
+        for d in sorted(pkgs.iterdir()):
+            if not d.is_dir():
+                continue
+            meta = d / "metadata.json"
+            label = None
+            if meta.is_file():
+                try:
+                    m = json.loads(meta.read_text(encoding="utf-8"))
+                    fc, tc = m.get("from_code"), m.get("to_code")
+                    if fc and tc:
+                        label = f"{fc}→{tc}"
+                except Exception:
+                    label = None
+            pairs.append(label or d.name)
+        return pairs
 
     def check_offline_readiness(self) -> dict:
         """
@@ -436,8 +506,11 @@ class _Config:
         phobert       = self._has_hf_model(self.PHOBERT_MODEL)
         sbert_id      = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         embeddings    = self._has_hf_model(sbert_id)
-        argos         = any(self.ARGOS_DIR.glob("packages/*/")) if self.ARGOS_DIR.exists() else False
-        glm_layout    = self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR) if not Path(self.GLM_LAYOUT_MODEL_DIR).is_dir() else Path(self.GLM_LAYOUT_MODEL_DIR).exists()
+        argos_pairs   = self._argos_installed_pairs()
+        argos         = bool(argos_pairs)
+        glm_layout    = (Path(self.GLM_LAYOUT_MODEL_DIR).exists()
+                         if Path(self.GLM_LAYOUT_MODEL_DIR).is_dir()
+                         else self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR, include_default_cache=True))
 
         setup = "run tools/setup_offline.py (online)"
         return {
@@ -450,7 +523,7 @@ class _Config:
             "ai_rewrite":    (rewrite,       self.QWEN_MODEL          + ("" if rewrite       else f"  ← MISSING ({setup})")),
             "phobert":       (phobert,       self.PHOBERT_MODEL       + ("" if phobert       else "  ← MISSING (extractive TF-IDF fallback still works)")),
             "embeddings":    (embeddings,    sbert_id                 + ("" if embeddings    else "  ← MISSING (char-hash retrieval fallback still works)")),
-            "argos":         (argos,         (f"{sum(1 for _ in self.ARGOS_DIR.glob('packages/*/'))} package(s) in {self.ARGOS_DIR/'packages'}" if argos else f"no packages  ← MISSING ({setup}); online Google translate still works")),
+            "argos":         (argos,         (f"{len(argos_pairs)} package(s): {', '.join(argos_pairs)}" if argos else f"no packages  ← MISSING ({setup}); online Google translate still works")),
             "glm_layout_model": (glm_layout, str(self.GLM_LAYOUT_MODEL_DIR) + ("" if glm_layout else "  ← not cached (setup_glm.sh --precache-layout, or first online run)")),
         }
 
