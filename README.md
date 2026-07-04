@@ -43,6 +43,19 @@ scripts/start_glm.sh    # only the GLM OCR server  (Apple-Silicon / MLX only, op
 scripts/stop.sh         # stop background services (web + GLM)
 ```
 
+**Optional GLM OCR (Apple Silicon)** — uses the GLM-OCR vendored inside this repo
+(`GLM-OCR/`); no external path needed on a clean clone:
+
+```bash
+scripts/setup_glm.sh    # create repo-local GLM-OCR/.venv-mlx + install deps + config
+scripts/start_glm.sh -b # start the GLM model server in the background
+scripts/check.sh        # shows GLM_OCR_DIR, GLM python, venv, port 8080, health
+```
+
+To use an external GLM-OCR checkout instead, set `GLM_OCR_DIR=/path/to/GLM-OCR`
+in `.env`. GLM stays optional: `ENABLE_GLM=false scripts/start.sh` runs SmartDocs
+without it, and the other three OCR engines never depend on it.
+
 Full guides: **[docs/RUN_EN.md](docs/RUN_EN.md)** · **[docs/RUN_VI.md](docs/RUN_VI.md)**.
 Desktop-app packaging plan: **[docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md)**.
 
@@ -87,7 +100,7 @@ run_windows.bat         # Windows
 | Capability | Works immediately | Needs extra setup |
 |---|---|---|
 | Legacy PaddleOCR, PaddleOCR Modern, VietOCR | ✅ (models fetched on first use / via helper) | — |
-| GLM-OCR engine | — | External GLM-OCR repo + MLX server, **Apple Silicon only** |
+| GLM-OCR engine | — | `scripts/setup_glm.sh` (repo-local venv) + MLX server, **Apple Silicon only** |
 | Correction, extractive summarization, text reading | ✅ | — |
 | Translation (online) | ✅ (needs internet) | — |
 | Translation (offline / Argos) | — | Argos packages in `MODEL_DIR` |

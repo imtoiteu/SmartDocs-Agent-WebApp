@@ -25,15 +25,18 @@ if [[ -f "$AGENT_DIR/.env" ]]; then
   set +a
 fi
 
-# GLM_ROOT: prefer .env value → sibling GLM-OCR/GLM-OCR next to SmartDocs-Agent
-GLM_ROOT="${GLM_ROOT:-$(cd "$AGENT_DIR/../GLM-OCR/GLM-OCR" 2>/dev/null && pwd || echo '')}"
+# GLM directory (clean-clone friendly): explicit GLM_OCR_DIR / GLM_ROOT wins,
+# otherwise the vendored copy inside THIS repo (<repo>/GLM-OCR).
+GLM_OCR_DIR="${GLM_OCR_DIR:-${GLM_ROOT:-$AGENT_DIR/GLM-OCR}}"
+GLM_ROOT="$GLM_OCR_DIR"
 GLM_MLX_PYTHON="${GLM_MLX_PYTHON:-$GLM_ROOT/.venv-mlx/bin/python}"
 GLM_PORT="${GLM_PORT:-8080}"
 
 if [[ -z "$GLM_ROOT" ]] || [[ ! -x "$GLM_MLX_PYTHON" ]]; then
   echo "ERROR: MLX python not found at ${GLM_MLX_PYTHON:-<unresolved>}" >&2
-  echo "       Set GLM_ROOT or GLM_MLX_PYTHON in .env (or as env vars)." >&2
-  echo "       Expected layout: <parent>/<SmartDocs-Agent>/../GLM-OCR/GLM-OCR/.venv-mlx/" >&2
+  echo "       Create the repo-local GLM venv:  scripts/setup_glm.sh" >&2
+  echo "       Or set GLM_OCR_DIR / GLM_MLX_PYTHON in .env for an external checkout." >&2
+  echo "       Default layout: <repo>/GLM-OCR/.venv-mlx/bin/python" >&2
   exit 1
 fi
 

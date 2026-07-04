@@ -281,19 +281,47 @@ class _Config:
         ).strip()
 
         # ── GLM-OCR engine (subprocess; OWN venv + local MLX model server) ───
-        # GLM-OCR runs in its own py3.12 venv (torch/transformers that CANNOT
-        # co-install with paddle) and talks to a local MLX model server. SmartDocs
-        # never imports it — the adapter shells out to the `glmocr` CLI and reads
-        # the artifacts it writes. Defaults point at the in-repo copy:
-        #   <repo_root>/GLM-OCR/GLM-OCR  (repo_root = parent of PaddleOCR/)
-        _glm_root_default = (BASE_DIR.parent.parent / "GLM-OCR" / "GLM-OCR")
-        self.GLM_ROOT:        Path = Path(os.environ.get("GLM_ROOT", str(_glm_root_default)))
+        # GLM-OCR is a third-party SDK vendored INSIDE this repo at
+        # <repo>/GLM-OCR. SmartDocs never imports it — the adapter shells out to
+        # the `glmocr` CLI (running in the GLM venv) and reads the artifacts it
+        # writes. GLM-OCR runs in its own venv because its torch/transformers
+        # deps cannot co-install with paddle.
+        #
+        # Path resolution is CLEAN-CLONE friendly: with nothing configured, the
+        # vendored copy at <repo>/GLM-OCR is used. Only an explicit env var points
+        # elsewhere:
+        #   GLM_OCR_DIR   – GLM-OCR directory (legacy alias: GLM_ROOT)
+        #   GLM_SDK_PYTHON – interpreter that runs the `glmocr` CLI
+        #   GLM_MLX_PYTHON – interpreter that runs the MLX model server
+        # When the interpreters are not pinned, we pick the first that exists of
+        # the repo-local .venv-mlx / .venv-sdk (setup_glm.sh creates .venv-mlx).
+        _glm_dir_default = BASE_DIR / "GLM-OCR"
+        _glm_dir = (os.environ.get("GLM_OCR_DIR")
+                    or os.environ.get("GLM_ROOT")
+                    or str(_glm_dir_default))
+        self.GLM_ROOT:        Path = Path(_glm_dir)
+
+        def _first_existing(candidates: list, fallback) -> str:
+            for c in candidates:
+                if Path(c).exists():
+                    return str(c)
+            return str(fallback)
+
+        _glm_mlx_py = self.GLM_ROOT / ".venv-mlx" / "bin" / "python"
+        _glm_sdk_py = self.GLM_ROOT / ".venv-sdk" / "bin" / "python"
+        # SDK CLI: prefer a dedicated .venv-sdk, else the unified .venv-mlx.
         self.GLM_SDK_PYTHON:  str  = os.environ.get(
-            "GLM_SDK_PYTHON", str(self.GLM_ROOT / ".venv-sdk" / "bin" / "python"))
+            "GLM_SDK_PYTHON", _first_existing([_glm_sdk_py, _glm_mlx_py], _glm_sdk_py))
+        # MLX server: prefer .venv-mlx, else fall back to .venv-sdk.
         self.GLM_MLX_PYTHON:  str  = os.environ.get(
-            "GLM_MLX_PYTHON", str(self.GLM_ROOT / ".venv-mlx" / "bin" / "python"))
+            "GLM_MLX_PYTHON", _first_existing([_glm_mlx_py, _glm_sdk_py], _glm_mlx_py))
+        # Selfhosted config: prefer a repo-local mlx_config.yaml (setup_glm.sh
+        # generates one), else the SDK's bundled glmocr/config.yaml.
         self.GLM_CONFIG_YAML: str  = os.environ.get(
-            "GLM_CONFIG_YAML", str(self.GLM_ROOT / "mlx_config.yaml"))
+            "GLM_CONFIG_YAML",
+            _first_existing([self.GLM_ROOT / "mlx_config.yaml",
+                             self.GLM_ROOT / "glmocr" / "config.yaml"],
+                            self.GLM_ROOT / "mlx_config.yaml"))
         # Local MLX model server (OpenAI-compatible). Started manually via
         # tools/glm_serve.sh; the adapter health-checks it before each run.
         self.GLM_OCR_API_URL: str  = os.environ.get("GLM_OCR_API_URL", "http://localhost:8080")

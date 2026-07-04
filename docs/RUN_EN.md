@@ -103,13 +103,24 @@ The app starts normally. In the UI, Legacy PaddleOCR, PaddleOCR Modern, and
 VietOCR all work. Selecting the **GLM OCR** engine shows a clear error toast
 telling you to start the GLM server — nothing crashes.
 
-**With GLM** (Apple Silicon only):
+**With GLM** (Apple Silicon only) — clean-clone setup, no external paths:
 
 ```bash
+scripts/setup_glm.sh         # creates repo-local GLM-OCR/.venv-mlx, installs deps,
+                             #   and writes GLM-OCR/mlx_config.yaml (selfhosted)
 scripts/start_glm.sh -b      # start the model server (first run loads the model)
 scripts/check.sh             # expect: "GLM health: 200"
 scripts/start_web.sh         # or scripts/start.sh for both at once
 ```
+
+GLM path resolution is repo-local by default:
+
+- `GLM_OCR_DIR` defaults to `<repo>/GLM-OCR` (the vendored copy).
+- The GLM interpreter is the first that exists of
+  `<repo>/GLM-OCR/.venv-mlx/bin/python` or `.../.venv-sdk/bin/python`.
+- To use an **external** GLM-OCR checkout instead, set `GLM_OCR_DIR=/your/path`
+  (and optionally `GLM_SDK_PYTHON` / `GLM_MLX_PYTHON`) in `.env`. Nothing is
+  hardcoded to any machine.
 
 Then in the UI: OCR tab → upload an image → pick **🧠 GLM OCR (Structured)** →
 Run OCR.

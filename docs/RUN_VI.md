@@ -104,13 +104,24 @@ App khởi động bình thường. Trong giao diện, Legacy PaddleOCR, PaddleO
 VietOCR đều chạy được. Khi chọn engine **GLM OCR** sẽ hiện thông báo lỗi rõ ràng
 yêu cầu bật máy chủ GLM — không có gì bị sập.
 
-**Có GLM** (chỉ Apple Silicon):
+**Có GLM** (chỉ Apple Silicon) — cài đặt kiểu clean-clone, không dùng đường dẫn ngoài:
 
 ```bash
+scripts/setup_glm.sh         # tạo GLM-OCR/.venv-mlx trong repo, cài deps, và
+                             #   ghi GLM-OCR/mlx_config.yaml (chế độ selfhosted)
 scripts/start_glm.sh -b      # bật máy chủ mô hình (lần đầu sẽ nạp mô hình)
 scripts/check.sh             # kỳ vọng: "GLM health: 200"
 scripts/start_web.sh         # hoặc scripts/start.sh để bật cả hai
 ```
+
+Phân giải đường dẫn GLM mặc định nằm trong repo:
+
+- `GLM_OCR_DIR` mặc định là `<repo>/GLM-OCR` (bản vendored).
+- Trình thông dịch GLM là cái đầu tiên tồn tại trong
+  `<repo>/GLM-OCR/.venv-mlx/bin/python` hoặc `.../.venv-sdk/bin/python`.
+- Nếu muốn dùng bản GLM-OCR **bên ngoài**, đặt `GLM_OCR_DIR=/đường/dẫn/của/bạn`
+  (và tuỳ chọn `GLM_SDK_PYTHON` / `GLM_MLX_PYTHON`) trong `.env`. Không có đường
+  dẫn nào bị hardcode theo máy cụ thể.
 
 Sau đó trong giao diện: tab OCR → tải ảnh lên → chọn **🧠 GLM OCR (Structured)** →
 Run OCR.

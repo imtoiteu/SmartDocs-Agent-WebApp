@@ -84,6 +84,12 @@ normalize_env() {
   GLM_MODEL="${GLM_MODEL:-mlx-community/GLM-OCR-bf16}"
   export GLM_HOST GLM_PORT GLM_OCR_API_URL GLM_MODEL
 
+  # GLM directory (clean-clone friendly): explicit GLM_OCR_DIR / legacy GLM_ROOT
+  # wins; otherwise the vendored copy INSIDE this repo (<repo>/GLM-OCR).
+  GLM_OCR_DIR="${GLM_OCR_DIR:-${GLM_ROOT:-$REPO_ROOT/GLM-OCR}}"
+  GLM_ROOT="$GLM_OCR_DIR"
+  export GLM_OCR_DIR GLM_ROOT
+
   # ENABLE_GLM: whether start.sh should try to launch the GLM server. Optional;
   # the app itself always runs without it. Normalise to lowercase true/false.
   ENABLE_GLM="${ENABLE_GLM:-true}"
@@ -124,24 +130,31 @@ resolve_python() {
   return 1
 }
 
-# --- GLM MLX interpreter resolution -----------------------------------------
-# Resolve the GLM-OCR MLX python the SAME way tools/glm_serve.sh does, so the
-# "is GLM available?" check in start.sh matches what actually launches:
-#   1. $GLM_MLX_PYTHON  (explicit override, if set in .env)
-#   2. $GLM_ROOT/.venv-mlx/bin/python  (GLM_ROOT from .env, if set)
-#   3. <repo>/../GLM-OCR/GLM-OCR/.venv-mlx/bin/python  (sibling checkout default)
-# Prints the path if it exists and is executable; returns non-zero otherwise.
-glm_mlx_python() {
+# --- GLM interpreter resolution ---------------------------------------------
+# Resolve the GLM python the SAME way config.py / tools/glm_serve.sh do, so the
+# scripts' "is GLM available?" checks match what actually launches. Repo-local
+# by default; an explicit env var points elsewhere. Requires normalize_env to
+# have set GLM_OCR_DIR. Prints the interpreter path (exists+executable) or
+# returns non-zero. Candidate order prefers .venv-mlx (server), then .venv-sdk.
+glm_python() {
   local candidates=()
   [ -n "${GLM_MLX_PYTHON:-}" ] && candidates+=("$GLM_MLX_PYTHON")
-  [ -n "${GLM_ROOT:-}" ] && candidates+=("$GLM_ROOT/.venv-mlx/bin/python")
-  candidates+=("$(cd "$REPO_ROOT/.." 2>/dev/null && pwd)/GLM-OCR/GLM-OCR/.venv-mlx/bin/python")
+  [ -n "${GLM_SDK_PYTHON:-}" ] && candidates+=("$GLM_SDK_PYTHON")
+  candidates+=("${GLM_OCR_DIR:-$REPO_ROOT/GLM-OCR}/.venv-mlx/bin/python")
+  candidates+=("${GLM_OCR_DIR:-$REPO_ROOT/GLM-OCR}/.venv-sdk/bin/python")
   local c
   for c in "${candidates[@]}"; do
     if [ -n "$c" ] && [ -x "$c" ]; then printf '%s\n' "$c"; return 0; fi
   done
   return 1
 }
+
+# Back-compat alias used by start.sh.
+glm_mlx_python() { glm_python; }
+
+# Print the path where the repo-local GLM venv is expected (whether or not it
+# exists) — used by diagnostics / setup messaging.
+glm_venv_dir() { printf '%s\n' "${GLM_OCR_DIR:-$REPO_ROOT/GLM-OCR}/.venv-mlx"; }
 
 # --- Port + HTTP helpers ----------------------------------------------------
 # True (0) when something is listening on 127.0.0.1:$1. Uses bash /dev/tcp so it

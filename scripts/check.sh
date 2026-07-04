@@ -60,39 +60,62 @@ if [ -n "$PY" ]; then
   fi
 fi
 
-# --- Ports ------------------------------------------------------------------
+# --- Web port + health ------------------------------------------------------
 hr
 if port_in_use "$SMARTDOCS_PORT"; then
   ok "Web port $SMARTDOCS_PORT: in use (SmartDocs likely running)"
 else
   info "Web port $SMARTDOCS_PORT: free (SmartDocs not running)"
 fi
-if port_in_use "$GLM_PORT"; then
-  ok "GLM port $GLM_PORT: in use"
-else
-  info "GLM port $GLM_PORT: free (GLM server not running — optional)"
-fi
-
-# --- Health -----------------------------------------------------------------
-hr
 if command -v curl >/dev/null 2>&1; then
   if smartdocs_health; then
     ok "SmartDocs health: responding on http://${SMARTDOCS_LOCAL_HOST}:${SMARTDOCS_PORT}/"
   else
     info "SmartDocs health: not responding (start it with scripts/start_web.sh)"
   fi
-
-  if [ "$ENABLE_GLM" = "true" ]; then
-    if glm_health; then
-      ok "GLM health: 200 on ${GLM_OCR_API_URL} (model: ${GLM_MODEL})"
-    else
-      info "GLM health: not responding on ${GLM_OCR_API_URL} (optional — start with scripts/start_glm.sh)"
-    fi
-  else
-    info "GLM: disabled (ENABLE_GLM=false) — Legacy/VietOCR/Modern OCR still work."
-  fi
 else
   warn "curl not found — skipping HTTP health checks."
+fi
+
+# --- GLM (optional) ---------------------------------------------------------
+hr
+info "GLM OCR (optional):"
+echo "    GLM_OCR_DIR      : $GLM_OCR_DIR"
+if [ -d "$GLM_OCR_DIR" ]; then
+  ok  "GLM-OCR dir exists   : yes ($( [ -f "$GLM_OCR_DIR/pyproject.toml" ] && echo 'vendored SDK present' || echo 'dir present'))"
+else
+  warn "GLM-OCR dir exists   : NO — run scripts/setup_glm.sh or set GLM_OCR_DIR"
+fi
+
+GLM_VENV="$(glm_venv_dir)"
+if [ -x "$GLM_VENV/bin/python" ]; then
+  ok  "Repo-local GLM venv  : present ($GLM_VENV)"
+else
+  info "Repo-local GLM venv  : missing ($GLM_VENV) — create with scripts/setup_glm.sh"
+fi
+
+if GLM_PY_DETECTED="$(glm_python 2>/dev/null)"; then
+  ok  "Detected GLM python  : $GLM_PY_DETECTED"
+else
+  info "Detected GLM python  : none found (repo-local venv not created yet)"
+fi
+
+if port_in_use "$GLM_PORT"; then
+  ok  "GLM port $GLM_PORT       : in use"
+else
+  info "GLM port $GLM_PORT       : free (server not running — optional)"
+fi
+
+if command -v curl >/dev/null 2>&1; then
+  if [ "$ENABLE_GLM" = "true" ]; then
+    if glm_health; then
+      ok  "GLM health           : 200 on ${GLM_OCR_API_URL} (model: ${GLM_MODEL})"
+    else
+      info "GLM health           : not responding on ${GLM_OCR_API_URL} (start: scripts/start_glm.sh -b)"
+    fi
+  else
+    info "GLM health           : skipped (ENABLE_GLM=false) — Legacy/VietOCR/Modern OCR still work."
+  fi
 fi
 
 hr
