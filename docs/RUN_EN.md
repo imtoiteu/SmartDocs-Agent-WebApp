@@ -106,20 +106,29 @@ telling you to start the GLM server — nothing crashes.
 **With GLM** (Apple Silicon only) — clean-clone setup, no external paths:
 
 ```bash
-scripts/setup.sh             # main venv + requirements/glm-sdk.txt (SDK deps for the UI path)
-scripts/setup_glm.sh         # GLM-OCR/.venv-mlx from requirements/glm-mlx-lock.txt (Py 3.10–3.12)
-                             #   also writes GLM-OCR/mlx_config.yaml (selfhosted)
-scripts/check.sh             # expect: "GLM SDK import (main): OK" + "GLM MLX import (glm): OK"
+scripts/setup.sh             # main SmartDocs venv (keeps Pillow 10.2.0 for VietOCR)
+scripts/setup_glm.sh         # creates BOTH GLM venvs (Py 3.10–3.12) + mlx_config.yaml:
+                             #   .venv-mlx  (MLX server, from glm-mlx-lock.txt)
+                             #   .venv-sdk  (glmocr CLI + torch, from glm-sdk-lock.txt)
+scripts/check.sh             # expect ".venv-mlx imports: OK" and ".venv-sdk imports: OK"
 scripts/start_glm.sh -b      # start the model server (first run loads the model)
 scripts/start.sh             # full stack; then expect "GLM health: 200"
 ```
 
-Why two setup steps: the SmartDocs UI imports the vendored `GLM-OCR/glmocr` SDK
-**in-process**, so its deps (`requirements/glm-sdk.txt`: PyMuPDF, wordfreq, …)
-go into the **main** venv via `setup.sh`. The separate MLX **model server** runs
-in `GLM-OCR/.venv-mlx`, pinned by `requirements/glm-mlx-lock.txt` via
-`setup_glm.sh`. `setup_glm.sh` requires Python 3.10/3.11/3.12 (it rejects
-3.13/3.14 unless you pass `--force`).
+**Why three separate Python environments.** The SmartDocs UI does **not** import
+GLM-OCR in-process. `services/ocr_engines/glm_adapter.py` runs `glmocr.cli` as a
+**subprocess** using `GLM-OCR/.venv-sdk/bin/python` (resolved by `config.py`,
+which prefers `.venv-sdk`, then `.venv-mlx`). This keeps three envs isolated:
+
+| Environment | Role | Pillow |
+|---|---|---|
+| main SmartDocs venv | Flask + Legacy/VietOCR/Modern OCR | **10.2.0** (VietOCR pins it) |
+| `GLM-OCR/.venv-mlx` | MLX model server (`mlx_vlm`) — no torch, no glmocr | 12.x |
+| `GLM-OCR/.venv-sdk` | glmocr CLI / layout detector (torch + editable glmocr) | 12.x |
+
+Because glmocr's Pillow 12.x lives only in `.venv-sdk`, it never collides with
+VietOCR's `Pillow==10.2.0` in the main venv. `setup_glm.sh` requires Python
+3.10/3.11/3.12 (rejects 3.13/3.14 unless you pass `--force`).
 
 GLM path resolution is repo-local by default:
 

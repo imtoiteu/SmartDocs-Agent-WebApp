@@ -44,7 +44,7 @@ else
   PY=""
 fi
 
-# --- Dependencies -----------------------------------------------------------
+# --- Dependencies (main SmartDocs venv) -------------------------------------
 if [ -n "$PY" ]; then
   if "$PY" -c 'import flask' >/dev/null 2>&1; then
     ok "Flask import OK"
@@ -57,6 +57,16 @@ if [ -n "$PY" ]; then
     ok "App config import OK"
   else
     warn "Could not import the app 'config' module (may need full deps / env)."
+  fi
+  # Pillow version — MUST stay 10.2.0 in the main venv for VietOCR. GLM's
+  # Pillow 12.x lives ONLY in GLM-OCR/.venv-sdk (isolated), so no conflict.
+  MAIN_PIL="$("$PY" -c 'import PIL; print(PIL.__version__)' 2>/dev/null || echo 'not installed')"
+  ok "Main Pillow version  : $MAIN_PIL"
+  # VietOCR import — the engine that pins Pillow==10.2.0.
+  if "$PY" -c 'import vietocr' >/dev/null 2>&1; then
+    ok "VietOCR import       : OK"
+  else
+    info "VietOCR import       : not available (run scripts/setup.sh)"
   fi
 fi
 
@@ -78,6 +88,9 @@ else
 fi
 
 # --- GLM (optional) ---------------------------------------------------------
+# Two independent venvs (see scripts/setup_glm.sh):
+#   .venv-mlx = MLX model server (mlx_vlm/mlx_lm)   — NO torch, NO glmocr
+#   .venv-sdk = glmocr CLI / layout detector        — torch + glmocr (UI uses this)
 hr
 info "GLM OCR (optional):"
 echo "    GLM_OCR_DIR      : $GLM_OCR_DIR"
@@ -87,44 +100,34 @@ else
   warn "GLM-OCR dir exists   : NO — run scripts/setup_glm.sh or set GLM_OCR_DIR"
 fi
 
-GLM_VENV="$(glm_venv_dir)"
-if [ -x "$GLM_VENV/bin/python" ]; then
-  ok  "Repo-local GLM venv  : present ($GLM_VENV)"
-else
-  info "Repo-local GLM venv  : missing ($GLM_VENV) — create with scripts/setup_glm.sh"
-fi
-
-GLM_PY_DETECTED=""
-if GLM_PY_DETECTED="$(glm_python 2>/dev/null)"; then
-  GLM_PYVER="$("$GLM_PY_DETECTED" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
-  ok  "Detected GLM python  : $GLM_PY_DETECTED (v$GLM_PYVER)"
-else
-  info "Detected GLM python  : none found (repo-local venv not created yet)"
-fi
-
-# (A) Can the MAIN SmartDocs Python import the vendored GLM-OCR SDK in-process?
-#     This is the Flask/UI path that failed with missing dotenv/fitz/portalocker.
-if [ -n "$PY" ] && [ -d "$GLM_OCR_DIR/glmocr" ]; then
-  if PYTHONPATH="$GLM_OCR_DIR" "$PY" -c "from dotenv import dotenv_values; import fitz; import portalocker; import glmocr.config; import glmocr.utils.image_utils; import glmocr.utils.lock_utils; print('GLM SDK imports OK')" >/dev/null 2>&1; then
-    ok  "GLM SDK import (main): OK (main Python can import glmocr)"
+# ── .venv-mlx (MLX model server) ──
+MLX_PY="$GLM_OCR_DIR/.venv-mlx/bin/python"
+if [ -x "$MLX_PY" ]; then
+  MLX_VER="$("$MLX_PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
+  ok  ".venv-mlx python     : $MLX_PY (v$MLX_VER)"
+  if "$MLX_PY" -c "import mlx_vlm, mlx_lm, transformers" >/dev/null 2>&1; then
+    ok  ".venv-mlx imports    : OK (mlx_vlm, mlx_lm, transformers)"
   else
-    warn "GLM SDK import (main): FAILED — run scripts/setup.sh (installs requirements/glm-sdk.txt)"
-    MISSING="$(PYTHONPATH="$GLM_OCR_DIR" "$PY" -c "from dotenv import dotenv_values; import fitz; import portalocker; import glmocr.config; import glmocr.utils.image_utils; import glmocr.utils.lock_utils" 2>&1 | tail -1)"
-    [ -n "$MISSING" ] && printf "         ↳ %s\n" "$MISSING" >&2
+    info ".venv-mlx imports    : not available (Apple-Silicon only, or re-run scripts/setup_glm.sh)"
   fi
 else
-  info "GLM SDK import (main): skipped (no main Python or GLM-OCR/glmocr not present)"
+  info ".venv-mlx python     : missing ($MLX_PY) — create with scripts/setup_glm.sh"
 fi
 
-# (B) Can the GLM venv Python import the MLX server deps?
-if [ -n "$GLM_PY_DETECTED" ]; then
-  if "$GLM_PY_DETECTED" -c "import mlx_vlm, mlx_lm, transformers; print('GLM MLX imports OK')" >/dev/null 2>&1; then
-    ok  "GLM MLX import (glm) : OK (mlx_vlm, mlx_lm, transformers)"
+# ── .venv-sdk (glmocr CLI / layout — the venv the UI actually uses) ──
+SDK_PY="$GLM_OCR_DIR/.venv-sdk/bin/python"
+if [ -x "$SDK_PY" ]; then
+  SDK_VER="$("$SDK_PY" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || echo '?')"
+  ok  ".venv-sdk python     : $SDK_PY (v$SDK_VER)"
+  if "$SDK_PY" -c "import torch; import glmocr; from glmocr.layout.layout_detector import PPDocLayoutDetector" >/dev/null 2>&1; then
+    ok  ".venv-sdk imports    : OK (torch, glmocr, PPDocLayoutDetector)"
   else
-    info "GLM MLX import (glm) : not available (Apple-Silicon only, or run scripts/setup_glm.sh)"
+    warn ".venv-sdk imports    : FAILED — run scripts/setup_glm.sh"
+    "$SDK_PY" -c "import torch; import glmocr; from glmocr.layout.layout_detector import PPDocLayoutDetector" 2>&1 | tail -3 | sed 's/^/         ↳ /' >&2
+    FAIL=1
   fi
 else
-  info "GLM MLX import (glm) : skipped (GLM venv not created yet)"
+  warn ".venv-sdk python     : MISSING ($SDK_PY) — GLM OCR from the UI will fail; run scripts/setup_glm.sh"
 fi
 
 if port_in_use "$GLM_PORT"; then

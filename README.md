@@ -47,24 +47,36 @@ scripts/stop.sh         # stop background services (web + GLM)
 (`GLM-OCR/`); no external path needed on a clean clone:
 
 ```bash
-scripts/setup.sh        # also installs requirements/glm-sdk.txt into the main venv,
-                        #   so the Flask/UI path can import the GLM-OCR SDK in-process
-scripts/setup_glm.sh    # create GLM-OCR/.venv-mlx from requirements/glm-mlx-lock.txt
-scripts/check.sh        # verifies GLM SDK import (main Python) + MLX import (GLM Python)
+scripts/setup.sh        # main SmartDocs venv (keeps Pillow 10.2.0 for VietOCR)
+scripts/setup_glm.sh    # create BOTH GLM venvs (.venv-mlx server + .venv-sdk CLI)
+scripts/check.sh        # verify both venvs' imports, Pillow, ports, health
 scripts/start_glm.sh -b # start the GLM model server in the background
 scripts/start.sh        # full stack
 ```
 
-Two dependency sets make the GLM path reproducible on a clean clone:
+**Three isolated Python environments** (this is the key to why GLM works without
+breaking VietOCR):
 
-- `requirements/glm-sdk.txt` — light SDK deps (PyMuPDF, wordfreq, …) that the
-  **main** SmartDocs venv needs because the UI imports `GLM-OCR/glmocr` in-process.
-- `requirements/glm-mlx-lock.txt` — pinned, known-good freeze for the **GLM
-  MLX server** venv (`GLM-OCR/.venv-mlx`, Python 3.10–3.12, Apple Silicon).
+| Env | Purpose | Pillow | Notes |
+|---|---|---|---|
+| main SmartDocs venv | Flask app + Legacy/VietOCR/Modern OCR | **10.2.0** (VietOCR pins it) | never imports glmocr |
+| `GLM-OCR/.venv-mlx` | MLX **model server** (`mlx_vlm`) | 12.x | no torch, no glmocr; Apple Silicon |
+| `GLM-OCR/.venv-sdk` | glmocr **CLI / layout** — what the UI drives | 12.x | torch + editable glmocr |
 
-To use an external GLM-OCR checkout instead, set `GLM_OCR_DIR=/path/to/GLM-OCR`
-in `.env`. GLM stays optional: `ENABLE_GLM=false scripts/start.sh` runs SmartDocs
-without it, and the other three OCR engines never depend on it.
+The SmartDocs UI never imports GLM-OCR in-process. `services/ocr_engines/glm_adapter.py`
+runs `glmocr.cli` as a **subprocess** using `GLM-OCR/.venv-sdk/bin/python`, so
+GLM's Pillow 12.x stays isolated and can't collide with the main venv's 10.2.0.
+
+Reproducible dependency files:
+
+- `requirements/glm-mlx-lock.txt` — pinned freeze for `.venv-mlx` (MLX server).
+- `requirements/glm-sdk-lock.txt` — pinned freeze for `.venv-sdk` (torch + layout
+  deps); `glmocr` itself is added by an editable install of the vendored `GLM-OCR/`.
+
+`setup_glm.sh` requires Python 3.10/3.11/3.12 (rejects 3.13/3.14 unless `--force`).
+To use an external GLM-OCR checkout, set `GLM_OCR_DIR=/path/to/GLM-OCR` in `.env`.
+GLM stays optional: `ENABLE_GLM=false scripts/start.sh` runs SmartDocs without it,
+and the other three OCR engines never depend on it.
 
 Full guides: **[docs/RUN_EN.md](docs/RUN_EN.md)** · **[docs/RUN_VI.md](docs/RUN_VI.md)**.
 Desktop-app packaging plan: **[docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md)**.

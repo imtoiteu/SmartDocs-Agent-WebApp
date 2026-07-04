@@ -107,20 +107,30 @@ yêu cầu bật máy chủ GLM — không có gì bị sập.
 **Có GLM** (chỉ Apple Silicon) — cài đặt kiểu clean-clone, không dùng đường dẫn ngoài:
 
 ```bash
-scripts/setup.sh             # venv chính + requirements/glm-sdk.txt (deps SDK cho luồng UI)
-scripts/setup_glm.sh         # GLM-OCR/.venv-mlx từ requirements/glm-mlx-lock.txt (Py 3.10–3.12)
-                             #   đồng thời ghi GLM-OCR/mlx_config.yaml (selfhosted)
-scripts/check.sh             # kỳ vọng: "GLM SDK import (main): OK" + "GLM MLX import (glm): OK"
+scripts/setup.sh             # venv SmartDocs chính (giữ Pillow 10.2.0 cho VietOCR)
+scripts/setup_glm.sh         # tạo CẢ HAI venv GLM (Py 3.10–3.12) + mlx_config.yaml:
+                             #   .venv-mlx  (máy chủ MLX, từ glm-mlx-lock.txt)
+                             #   .venv-sdk  (glmocr CLI + torch, từ glm-sdk-lock.txt)
+scripts/check.sh             # kỳ vọng ".venv-mlx imports: OK" và ".venv-sdk imports: OK"
 scripts/start_glm.sh -b      # bật máy chủ mô hình (lần đầu sẽ nạp mô hình)
 scripts/start.sh             # bật cả stack; sau đó kỳ vọng "GLM health: 200"
 ```
 
-Vì sao có hai bước setup: giao diện SmartDocs import SDK `GLM-OCR/glmocr`
-**trong cùng tiến trình**, nên các deps của nó (`requirements/glm-sdk.txt`:
-PyMuPDF, wordfreq, …) phải nằm trong venv **chính** qua `setup.sh`. Máy chủ
-**mô hình MLX** chạy riêng trong `GLM-OCR/.venv-mlx`, được ghim bởi
-`requirements/glm-mlx-lock.txt` qua `setup_glm.sh`. `setup_glm.sh` yêu cầu
-Python 3.10/3.11/3.12 (từ chối 3.13/3.14 trừ khi truyền `--force`).
+**Vì sao có ba môi trường Python riêng.** Giao diện SmartDocs **không** import
+GLM-OCR trong cùng tiến trình. `services/ocr_engines/glm_adapter.py` chạy
+`glmocr.cli` như một **tiến trình con** dùng `GLM-OCR/.venv-sdk/bin/python`
+(do `config.py` phân giải, ưu tiên `.venv-sdk` rồi `.venv-mlx`). Nhờ đó ba môi
+trường tách biệt:
+
+| Môi trường | Vai trò | Pillow |
+|---|---|---|
+| venv SmartDocs chính | Flask + Legacy/VietOCR/Modern OCR | **10.2.0** (VietOCR ghim) |
+| `GLM-OCR/.venv-mlx` | máy chủ mô hình MLX (`mlx_vlm`) — không torch, không glmocr | 12.x |
+| `GLM-OCR/.venv-sdk` | glmocr CLI / layout detector (torch + glmocr editable) | 12.x |
+
+Vì Pillow 12.x của glmocr chỉ nằm trong `.venv-sdk`, nó không bao giờ xung đột
+với `Pillow==10.2.0` của VietOCR ở venv chính. `setup_glm.sh` yêu cầu Python
+3.10/3.11/3.12 (từ chối 3.13/3.14 trừ khi truyền `--force`).
 
 Phân giải đường dẫn GLM mặc định nằm trong repo:
 
