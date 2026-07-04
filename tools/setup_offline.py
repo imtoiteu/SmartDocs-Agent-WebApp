@@ -6,9 +6,13 @@ Run this script ONCE on a machine with internet access.
 It downloads all required models into web_app/models/
 so the app can run completely offline afterwards.
 
-Usage:
-    cd /path/to/web_app
-    python tools/setup_offline.py
+Usage (preferred — resolves the main SmartDocs venv automatically):
+    scripts/setup_offline.sh
+
+Running it directly works ONLY with the main venv's interpreter
+(a bare `python tools/setup_offline.py` often picks the SYSTEM python,
+which has no vietocr/PIL/argostranslate — steps then silently skip):
+    .venv/bin/python tools/setup_offline.py      # or ../.venv/bin/python …
 
 After this completes, copy the entire project folder
 (including models/) to any machine and run:
@@ -29,6 +33,64 @@ print()
 print("=" * 60)
 print("  SmartDocs Platform — Offline Model Setup")
 print("=" * 60)
+
+# ── Interpreter diagnostics (BEFORE any app import) ───────────────────────────
+# The single most common failure mode of this script is running it with the
+# WRONG python (system interpreter instead of the main SmartDocs venv): the
+# pure-download steps succeed but VietOCR config.yml / Argos / embeddings are
+# silently skipped with "No module named …". Surface that immediately.
+import platform
+
+
+def _import_ok(mod: str) -> bool:
+    try:
+        __import__(mod)
+        return True
+    except Exception:
+        return False
+
+
+def _expected_venv_dirs():
+    """The venv locations scripts/lib.sh::venv_python resolves, in order."""
+    import os as _os
+    dirs = []
+    sp = _os.environ.get("SMARTDOCS_PYTHON", "").strip()
+    if sp:
+        # <venv>/bin/python → <venv>   (also handles <venv>/Scripts/python.exe)
+        dirs.append(Path(sp).parent.parent)
+    dirs.append(WEB_APP / ".venv")
+    dirs.append(WEB_APP.parent / ".venv")
+    return [d for d in dirs if d.is_dir()]
+
+
+_IMPORT_CHECKS = {
+    "PIL":                   _import_ok("PIL"),
+    "vietocr":               _import_ok("vietocr"),
+    "argostranslate":        _import_ok("argostranslate"),
+    "sentence_transformers": _import_ok("sentence_transformers"),
+}
+
+print(f"\n  Python     : {sys.executable}")
+print(f"  Version    : {platform.python_version()}")
+for _mod, _okflag in _IMPORT_CHECKS.items():
+    print(f"  import {_mod:<22}: {'OK' if _okflag else '❌ MISSING'}")
+
+# In a venv, sys.prefix IS the venv directory (don't compare executables —
+# venv pythons are symlinks, so realpath collapses to the base interpreter).
+_expected = _expected_venv_dirs()
+_in_expected_venv = any(
+    Path(sys.prefix).resolve() == d.resolve() for d in _expected
+)
+if (_expected and not _in_expected_venv) or not (_IMPORT_CHECKS["PIL"] and _IMPORT_CHECKS["vietocr"]):
+    print()
+    print("  " + "!" * 56)
+    print("  ⚠️  You may be using the wrong Python. Use scripts/setup_offline.sh.")
+    print("     It resolves the main SmartDocs venv automatically (same one")
+    print("     scripts/check.sh uses). All four imports above are provided by")
+    print("     requirements.txt in that venv.")
+    if _expected:
+        print(f"     Expected venv: {_expected[0]}")
+    print("  " + "!" * 56)
 
 # ── Load config (sets HF env vars) ────────────────────────────────────────────
 from config import cfg
@@ -121,6 +183,8 @@ try:
     print("  ✅ sentence-transformers ready (semantic RAG enabled)")
 except ImportError as e:
     print(f"  ⚠️  Skipped (missing library): {e}")
+    print("     sentence-transformers IS in requirements.txt — a missing import here")
+    print("     usually means the wrong Python. Use scripts/setup_offline.sh.")
 except Exception as e:
     print(f"  ❌ Failed: {e}")
     errors.append(f"sentence-transformers: {e}")
@@ -187,6 +251,9 @@ try:
                 errors.append("VietOCR: bundled package configs not found; config.yml missing")
         except Exception as e:
             print(f"  ⚠️  Could not generate config.yml: {e}")
+            if isinstance(e, ImportError):
+                print("     vietocr IS in requirements.txt — a missing import here usually")
+                print("     means the wrong Python. Use scripts/setup_offline.sh.")
             errors.append(f"VietOCR config.yml: {e}")
 
     print("  ✅ VietOCR ready")
@@ -264,7 +331,8 @@ try:
                       f"or drop the .argosmodel into {_argos_packages_dir})")
 except ImportError as e:
     print(f"  ⚠️  Skipped (missing library): {e}")
-    print("     Manual install: pip install argostranslate, then re-run this script.")
+    print("     argostranslate IS in requirements.txt — a missing import here usually")
+    print("     means the wrong Python. Use scripts/setup_offline.sh.")
 except Exception as e:
     print(f"  ❌ Failed: {e}")
     print(f"     Manual fallback: `argospm install translate-en_vi` and `translate-vi_en`, "
@@ -363,7 +431,7 @@ try:
     if missing_required:
         print()
         print("  ❗ Required asset(s) still missing: " + ", ".join(missing_required))
-        print("     Re-run online:  python tools/setup_offline.py")
+        print("     Re-run online:  scripts/setup_offline.sh")
     print()
 except Exception as e:
     print(f"  (readiness snapshot skipped: {e})")

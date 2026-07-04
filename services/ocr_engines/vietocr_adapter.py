@@ -47,7 +47,7 @@ class VietOCREngine(OCREngine):
             if not config_path.exists():
                 raise RuntimeError(
                     f"VietOCR config missing at {config_path}. "
-                    "Run 'python tools/setup_offline.py' (online, once) to download the "
+                    "Run 'scripts/setup_offline.sh' (online, once) to download the "
                     "weights and generate this config, or set VIETOCR_CONFIG/VIETOCR_WEIGHTS."
                 )
             

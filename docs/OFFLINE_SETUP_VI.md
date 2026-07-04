@@ -16,19 +16,22 @@ kiểm tra mức sẵn sàng.
 
 ```bash
 scripts/setup.sh                        # venv chính + deps + .env + thư mục
-python tools/setup_offline.py           # tải TẤT CẢ mô hình offline (cần mạng, một lần)
+scripts/setup_offline.sh                # tải TẤT CẢ mô hình offline (cần mạng, một lần)
 scripts/setup_glm.sh --precache-layout  # (chỉ Apple Silicon) venv GLM + mô hình layout
 scripts/check_offline.sh                # kiểm tra: dùng được / cần cài / đang dùng fallback
 scripts/start.sh                        # chạy hệ thống
 ```
 
-`tools/setup_offline.py` phải chạy **trong virtualenv chính** (cần `torch`,
-`transformers`, `paddleocr`, `vietocr`, `argostranslate`). Nếu dùng `scripts/`,
-hãy kích hoạt venv trước hoặc chạy bằng Python của venv:
-
-```bash
-.venv/bin/python tools/setup_offline.py         # hoặc ../.venv/bin/python …
-```
+> **Luôn dùng `scripts/setup_offline.sh`, không dùng `python tools/setup_offline.py`.**
+> Lệnh `python` trần thường trỏ tới Python HỆ THỐNG — không có dependency nào của
+> ứng dụng — nên các bước tải thuần vẫn "thành công" nhưng VietOCR `config.yml`,
+> Argos và embeddings bị bỏ qua âm thầm với lỗi `No module named 'vietocr' /
+> 'PIL' / …`. Wrapper này tìm venv chính của SmartDocs đúng như `scripts/check.sh`
+> (`$SMARTDOCS_PYTHON` → `<repo>/.venv` → `<repo>/../.venv`) và từ chối chạy với
+> interpreter khác. Bản thân `tools/setup_offline.py` cũng in ra Python đang dùng
+> và kết quả import `PIL` / `vietocr` / `argostranslate` / `sentence_transformers`
+> — cảnh báo rõ nếu interpreter có vẻ sai. Cả bốn gói đều nằm trong
+> `requirements.txt` của venv chính.
 
 ---
 
@@ -101,11 +104,16 @@ layout GLM là ngoại lệ, được kiểm tra trong cache mặc định `~/.c
 
 ## Khắc phục sự cố
 
+- **Cài đặt in ra `No module named 'vietocr' / 'PIL' / 'argostranslate' / 'sentence_transformers'`** —
+  bạn đã chạy tool bằng Python sai (hệ thống). Hãy dùng wrapper:
+  ```bash
+  scripts/setup_offline.sh
+  ```
 - **`check_offline.sh` báo thiếu mô hình bắt buộc ngay sau khi cài** — quá trình tải
   bị gián đoạn (hoặc một sự cố crash làm `setup_offline.py` dừng giữa chừng). Chỉ cần
   chạy lại; các phần đã xong sẽ được bỏ qua:
   ```bash
-  python tools/setup_offline.py
+  scripts/setup_offline.sh
   ```
   `setup_offline.py` chạy bước PaddleOCR (dễ crash) **sau cùng**, nên VietOCR, Argos
   và các mô hình Qwen/PhoBERT/embedding đã nằm trên đĩa ngay cả khi Paddle gặp lỗi.

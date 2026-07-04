@@ -512,7 +512,7 @@ class _Config:
                          if Path(self.GLM_LAYOUT_MODEL_DIR).is_dir()
                          else self._has_hf_model(self.GLM_LAYOUT_MODEL_DIR, include_default_cache=True))
 
-        setup = "run tools/setup_offline.py (online)"
+        setup = "run scripts/setup_offline.sh (online)"
         return {
             "vietocr_config": (vietocr_cfg.exists(),
                                str(vietocr_cfg) + ("" if vietocr_cfg.exists() else f"  ← MISSING ({setup})")),
@@ -607,12 +607,12 @@ class _Config:
             f"  CHAT_MODEL : {self.CHAT_MODEL}",
             f"  CHAT_FALLBK: {self.FALLBACK_CHAT_MODEL}",
             "  ── Local Models ─────────────────────────────────",
-            f"  Qwen      : {'✅' if models['qwen']     else '❌ MISSING — run tools/setup_offline.py'}",
-            f"  PhoBERT   : {'✅' if models['phobert']  else '❌ MISSING — run tools/setup_offline.py'}",
+            f"  Qwen      : {'✅' if models['qwen']     else '❌ MISSING — run scripts/setup_offline.sh'}",
+            f"  PhoBERT   : {'✅' if models['phobert']  else '❌ MISSING — run scripts/setup_offline.sh'}",
             f"  Paddle det: {'✅' if models['paddle_det'] else '⚠️  will download on first OCR run'}",
             f"  Paddle rec: {'✅' if models['paddle_rec'] else '⚠️  will download on first OCR run'}",
             f"  VietOCR   : {'✅' if models['vietocr'] else '⚠️  using library default / configure VIETOCR_WEIGHTS'}",
-            f"  Argos pkg : {'✅' if models['argos']    else '❌ MISSING — run tools/setup_offline.py'}",
+            f"  Argos pkg : {'✅' if models['argos']    else '❌ MISSING — run scripts/setup_offline.sh'}",
             "=" * 56,
         ]
         return "\n".join(lines)

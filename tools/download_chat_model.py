@@ -56,7 +56,7 @@ def main():
         print(f"ℹ️  Fallback model {fallback_id} already present.")
     else:
         print(f"⚠️  Fallback model {fallback_id} not found either.")
-        print(f"   Run tools/setup_offline.py to download the 1.5B model.")
+        print(f"   Run scripts/setup_offline.sh to download the 1.5B model.")
 
     print(f"\n⬇️  Downloading {MODEL_ID}...")
     print("   This may take 10–30 minutes depending on your internet speed.\n")

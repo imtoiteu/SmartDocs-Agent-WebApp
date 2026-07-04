@@ -222,7 +222,7 @@ Four engines are registered (`services/ocr_engines/router.py`). The default is `
 - Weights: expects `MODEL_DIR/vietocr/config.yml` and a weights file (default
   `MODEL_DIR/vietocr/vgg_transformer.pth`, or `VIETOCR_WEIGHTS`). The adapter raises a clear
   error if these are missing.
-- `tools/setup_offline.py` is the intended helper to populate `MODEL_DIR` (incl. VietOCR);
+- `scripts/setup_offline.sh` (wrapper for `tools/setup_offline.py`, always using the main venv Python) is the intended helper to populate `MODEL_DIR` (incl. VietOCR);
   the exact set of files it fetches is **UNKNOWN** without running it — inspect the script.
 
 ### 6.4 GLM-OCR (OPTIONAL · Apple Silicon / MLX only)
@@ -290,7 +290,7 @@ GEMINI_MODEL=gemini-2.0-flash           # default
 - No key needed. Uses the locally loaded Qwen model via `services/ai_rewrite_service.py`
   (`QWEN_MODEL`, default `Qwen/Qwen2.5-1.5B-Instruct`).
 - The RAG `chat` surface uses the same default local LLM (`CHAT_MODEL`, default
-  `Qwen/Qwen2.5-1.5B-Instruct`); `tools/setup_offline.py` already caches it. To
+  `Qwen/Qwen2.5-1.5B-Instruct`); `scripts/setup_offline.sh` already caches it. To
   opt into a larger chat model, set `CHAT_MODEL` in `.env`, then:
   ```bash
   python tools/download_chat_model.py   # fetches the configured CHAT_MODEL into models/huggingface/
@@ -339,7 +339,7 @@ pytest discovery. (No coverage/CI config is present in the repo.)
 ### Helper scripts (`tools/`)
 | Script | Purpose (from its docstring) |
 |---|---|
-| `setup_offline.py` | Run once online to download all required models into `MODEL_DIR` for offline use. |
+| `setup_offline.py` | Run once online to download all required models into `MODEL_DIR` for offline use. **Run via `scripts/setup_offline.sh`** (resolves the main venv Python). |
 | `download_chat_model.py` | Download the configured `CHAT_MODEL` (default 1.5B; set a larger id in `.env` to opt in) into `models/huggingface/`. |
 | `warmup_modern_models.py` | Fetch the PaddleOCR Modern (PP-StructureV3/PP-OCRv6) models online once. |
 | `glm_serve.sh` | Start the local GLM-OCR MLX server on `:8080`. |
@@ -351,7 +351,7 @@ pytest discovery. (No coverage/CI config is present in the repo.)
 |---|---|
 | `ImportError: libGL.so.1` (Linux) | Install `libgl1 libglib2.0-0` (§3). |
 | OCR fails only for the **GLM** engine; others fine | MLX server not running → `tools/glm_serve.sh`; verify with the curl health check (§6.4). |
-| VietOCR raises "weights/config missing" | Place `config.yml` + `vgg_transformer.pth` in `MODEL_DIR/vietocr/` or set `VIETOCR_WEIGHTS`; run `tools/setup_offline.py`. |
+| VietOCR raises "weights/config missing" | Place `config.yml` + `vgg_transformer.pth` in `MODEL_DIR/vietocr/` or set `VIETOCR_WEIGHTS`; run `scripts/setup_offline.sh`. |
 | Models try to download but you're offline | `OFFLINE=1` only covers HF/Argos/Stanza. Pre-fetch PaddleOCR models online once (`tools/warmup_modern_models.py`) and Qwen via `tools/download_chat_model.py`. |
 | Chat/summarize returns HTTP 202 "warming up" | The local model is still loading in the background; retry after a few seconds. |
 | Sessions drop on every restart | `SECRET_KEY` is unset (random per process). Set a fixed `SECRET_KEY`. |

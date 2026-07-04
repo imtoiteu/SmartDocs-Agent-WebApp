@@ -48,10 +48,10 @@ chạy bằng fallback tích hợp.
 Với `OFFLINE=1` (mặc định), mô hình AI chỉ nạp từ cache cục bộ. Ứng dụng web,
 đăng nhập, tải lên, quản lý tài liệu và sửa lỗi cơ bản chạy được ngay, nhưng
 **chat, viết lại AI, VietOCR, dịch offline và GLM OCR** cần được chuẩn bị một lần
-khi có mạng. Chạy **trong venv chính**:
+khi có mạng. Chạy wrapper (tự tìm Python của venv chính):
 
 ```bash
-.venv/bin/python tools/setup_offline.py     # hoặc ../.venv/bin/python tools/setup_offline.py
+scripts/setup_offline.sh                    # luôn dùng Python của venv chính
 ```
 
 Lệnh này cache: **mô hình LLM cục bộ mặc định Qwen 2.5 1.5B** (dùng cho chat, viết

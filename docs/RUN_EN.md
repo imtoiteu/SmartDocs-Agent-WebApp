@@ -48,10 +48,10 @@ or is running on a built-in fallback.
 With `OFFLINE=1` (the default) AI models load only from local caches. The web
 app, login, upload, document management and basic correction work immediately,
 but **chat, AI rewrite, VietOCR, offline translation and GLM OCR** must be primed
-once while online. Run this **inside the main venv**:
+once while online. Run the wrapper (it resolves the main venv Python automatically):
 
 ```bash
-.venv/bin/python tools/setup_offline.py     # or ../.venv/bin/python tools/setup_offline.py
+scripts/setup_offline.sh                    # always uses the main venv Python
 ```
 
 This caches: the **default local LLM Qwen 2.5 1.5B** (used for chat, AI rewrite

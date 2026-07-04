@@ -16,19 +16,23 @@ cache them, and how to verify readiness.
 
 ```bash
 scripts/setup.sh                        # main venv + deps + .env + folders
-python tools/setup_offline.py           # download ALL offline models (online, once)
+scripts/setup_offline.sh                # download ALL offline models (online, once)
 scripts/setup_glm.sh --precache-layout  # (Apple Silicon only) GLM venvs + layout model
 scripts/check_offline.sh                # verify: every feature usable / needs-setup / fallback
 scripts/start.sh                        # run the stack
 ```
 
-`tools/setup_offline.py` must run **inside the main virtualenv** (it needs
-`torch`, `transformers`, `paddleocr`, `vietocr`, `argostranslate`). If you use
-`scripts/`, activate the venv first or run it with the venv's Python, e.g.:
-
-```bash
-.venv/bin/python tools/setup_offline.py         # or ../.venv/bin/python …
-```
+> **Always use `scripts/setup_offline.sh`, not `python tools/setup_offline.py`.**
+> A bare `python` often resolves to the SYSTEM interpreter, which has none of the
+> app's dependencies — the run then "succeeds" for pure downloads but silently
+> skips VietOCR `config.yml`, Argos and embeddings with `No module named 'vietocr'
+> / 'PIL' / …`. The wrapper resolves the main SmartDocs venv exactly the way
+> `scripts/check.sh` does (`$SMARTDOCS_PYTHON` → `<repo>/.venv` → `<repo>/../.venv`)
+> and refuses to run with anything else. `tools/setup_offline.py` itself also
+> prints which Python it runs under and whether `PIL` / `vietocr` /
+> `argostranslate` / `sentence_transformers` import — and warns loudly if the
+> interpreter looks wrong. All four are provided by `requirements.txt` in the
+> main venv.
 
 ---
 
@@ -104,11 +108,16 @@ layout model is the one exception checked in the default `~/.cache/huggingface`.
 
 ## Troubleshooting
 
+- **Setup printed `No module named 'vietocr' / 'PIL' / 'argostranslate' / 'sentence_transformers'`** —
+  you ran the tool with the wrong (system) Python. Use the wrapper:
+  ```bash
+  scripts/setup_offline.sh
+  ```
 - **`check_offline.sh` shows a required model missing right after setup** — the
   download was interrupted (or a hard crash aborted `setup_offline.py` mid-run).
   Just re-run it; completed assets are skipped:
   ```bash
-  python tools/setup_offline.py
+  scripts/setup_offline.sh
   ```
   `setup_offline.py` runs the crash-prone PaddleOCR step **last**, so VietOCR,
   Argos and the Qwen/PhoBERT/embedding models are already on disk even if Paddle

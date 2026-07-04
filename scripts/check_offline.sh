@@ -124,6 +124,7 @@ hr
 ok "Offline readiness report complete."
 echo
 echo "To make a clean clone fully offline-ready:"
-echo "  python tools/setup_offline.py          # Qwen(chat+rewrite), PhoBERT, embeddings, Paddle, VietOCR(+config.yml), Argos"
+echo "  scripts/setup_offline.sh               # Qwen(chat+rewrite), PhoBERT, embeddings, Paddle, VietOCR(+config.yml), Argos"
+echo "                                          # (wrapper — always uses the main venv Python; do NOT use bare 'python')"
 echo "  scripts/setup_glm.sh --precache-layout  # (Apple Silicon) GLM venvs + layout model cache"
 exit "$FAIL"

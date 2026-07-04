@@ -221,7 +221,7 @@ What holds durable state:
 | Database (users, documents, **OCR/translation/summary artifacts**, chat + agent history) | `paddleocr.db` (or `DB_PATH`) | Consistent snapshot: `sqlite3 paddleocr.db ".backup '/backups/smartdocs-$(date +%F).db'"`. Avoid plain `cp` while running. |
 | Uploaded files | `uploads/` (or `UPLOAD_DIR`) | Back up **together with the DB** — `documents.file_id` references these files; restoring one without the other leaves dangling rows/files. |
 | Secrets / config | `.env` | Store securely (secret manager); not in VCS (`.gitignore` excludes it). |
-| Local models | `models/` (or `MODEL_DIR`) | Large but static; back up once, or re-download via `tools/setup_offline.py` / `download_chat_model.py` / `warmup_modern_models.py`. |
+| Local models | `models/` (or `MODEL_DIR`) | Large but static; back up once, or re-download via `scripts/setup_offline.sh` / `download_chat_model.py` / `warmup_modern_models.py`. |
 
 Notes:
 - The **in-memory RAG index is ephemeral** — it is rebuilt from DB artifacts on startup

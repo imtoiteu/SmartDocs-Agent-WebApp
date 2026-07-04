@@ -41,8 +41,9 @@ work immediately, but **chat, AI rewrite, VietOCR, offline translation and GLM O
 need a one-time online priming**:
 
 ```bash
-.venv/bin/python tools/setup_offline.py   # cache local LLM (Qwen 2.5 1.5B — chat/rewrite/agent),
+scripts/setup_offline.sh                  # cache local LLM (Qwen 2.5 1.5B — chat/rewrite/agent),
                                           # PhoBERT, embeddings, VietOCR weights+config.yml, Argos
+                                          # (wrapper — always uses the main venv Python)
 scripts/check_offline.sh                  # report: each feature usable / needs-setup / fallback
 ```
 
@@ -141,13 +142,13 @@ run_windows.bat         # Windows
 
 | Capability | Works immediately | Needs extra setup |
 |---|---|---|
-| Legacy PaddleOCR, PaddleOCR Modern | ✅ (models fetched on first online OCR run) | pre-cache via `tools/setup_offline.py` for offline |
-| VietOCR | — | `tools/setup_offline.py` — needs `vgg_transformer.pth` **and** `models/vietocr/config.yml` (both created by it) |
+| Legacy PaddleOCR, PaddleOCR Modern | ✅ (models fetched on first online OCR run) | pre-cache via `scripts/setup_offline.sh` for offline |
+| VietOCR | — | `scripts/setup_offline.sh` — needs `vgg_transformer.pth` **and** `models/vietocr/config.yml` (both created by it) |
 | GLM-OCR engine | — | `scripts/setup_glm.sh --precache-layout` (repo-local venvs + PP-DocLayoutV3) + MLX server, **Apple Silicon only** |
 | Correction (rule-based), extractive summarization, text reading | ✅ | — |
 | Translation (online) | ✅ (needs internet) | — |
-| Translation (offline / Argos) | — | `tools/setup_offline.py` (Argos packages in `MODEL_DIR`) |
-| RAG chat / AI rewrite / agent (local **Qwen 2.5 1.5B**, the default) | — with `OFFLINE=1` | `tools/setup_offline.py` caches the 1.5B model (larger models opt-in via `.env`) |
+| Translation (offline / Argos) | — | `scripts/setup_offline.sh` (Argos packages in `MODEL_DIR`) |
+| RAG chat / AI rewrite / agent (local **Qwen 2.5 1.5B**, the default) | — with `OFFLINE=1` | `scripts/setup_offline.sh` caches the 1.5B model (larger models opt-in via `.env`) |
 | Agent with cloud LLMs (Groq / Gemini) | — | API keys in `.env` (falls back to local Qwen) |
 
 Verify readiness anytime with **`scripts/check_offline.sh`**.
