@@ -54,9 +54,10 @@ khi có mạng. Chạy **trong venv chính**:
 .venv/bin/python tools/setup_offline.py     # hoặc ../.venv/bin/python tools/setup_offline.py
 ```
 
-Lệnh này cache: các mô hình chat Qwen (chính 3B + dự phòng 1.5B), mô hình viết lại
-Qwen (1.5B), PhoBERT, mô hình embedding RAG, mô hình PaddleOCR, weights VietOCR
-**và** `models/vietocr/config.yml`, cùng các gói dịch Argos.
+Lệnh này cache: **mô hình LLM cục bộ mặc định Qwen 2.5 1.5B** (dùng cho chat, viết
+lại AI và agent), PhoBERT, mô hình embedding RAG, mô hình PaddleOCR, weights VietOCR
+**và** `models/vietocr/config.yml`, cùng các gói dịch Argos. Các mô hình lớn hơn
+(vd 3B) chỉ tải khi bạn tự bật qua `.env`.
 Hướng dẫn đầy đủ: **[OFFLINE_SETUP_VI.md](OFFLINE_SETUP_VI.md)**.
 
 ## 3. Khởi động

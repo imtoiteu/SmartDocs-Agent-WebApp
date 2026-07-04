@@ -9,7 +9,8 @@ model's answers, so you can read them side-by-side and judge quality yourself.
 
 It changes NOTHING permanent: like eval_model.py, it sets QWEN_MODEL/CHAT_MODEL
 as process env vars before config loads (config uses load_dotenv(override=False)),
-so .env (Qwen2.5-3B) stays the default. CPU + bfloat16 (MPS hard-crashes at 3B+).
+so the committed default (Qwen2.5-1.5B) stays put. CPU + bfloat16 (MPS hard-crashes
+at 3B+), which is why 1.5B is the default local model for this app.
 
 Because two 6–8 GB models can't both fit in 16 GB, run ONE model per process:
 

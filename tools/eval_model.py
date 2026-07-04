@@ -5,8 +5,8 @@ eval_model.py — Candidate-LLM evaluation harness (NON-PERMANENT, .env untouche
 Evaluates a Qwen chat/rewrite model END-TO-END through the real services, without
 changing the committed configuration. It sets QWEN_MODEL / CHAT_MODEL etc. as
 process environment variables BEFORE importing `config`; because config.py loads
-the .env with `override=False`, these process-env values win, so the permanent
-default (Qwen2.5-3B in .env) is never modified.
+the .env with `override=False`, these process-env values win, so the committed
+default local LLM (Qwen2.5-1.5B) is never modified.
 
 It exercises and measures: AI Rewrite, AI Chat (general), RAG (index + doc chat),
 Summarization (AI-rewrite + fast/extractive), and Translation (offline Argos).

@@ -342,13 +342,17 @@ class _Config:
         self.QWEN_MODEL:  str  = os.environ.get("QWEN_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
         self.QWEN_DTYPE         = _select_dtype(self.QWEN_DEVICE)
 
-        # ── AI Chat (separate model from AI Rewrite) ─────────────────────────
-        # Primary  : Qwen2.5-3B-Instruct (better Vietnamese QA / document understanding)
-        # Fallback : Qwen2.5-1.5B-Instruct (if 3B unavailable or OOM)
+        # ── AI Chat ──────────────────────────────────────────────────────────
+        # DEFAULT LOCAL LLM POLICY: Qwen2.5-1.5B-Instruct is the intended default
+        # for ALL local LLM features (chat, AI rewrite, agent). Larger Qwen models
+        # (e.g. 3B) are NOT used by default — they are unstable on Apple-Silicon
+        # MPS for this app. To opt into a bigger model, set CHAT_MODEL in .env.
+        # Fallback is the SAME 1.5B model until a different one is explicitly set,
+        # so a missing 3B never makes chat report itself as broken.
         # Device   : same CPU-safe default as AI Rewrite
         _chat_req              = os.environ.get("CHAT_DEVICE", "cpu" if self.DEVICE in ("mps", "cpu") else "auto")
         self.CHAT_DEVICE: str  = _select_device(_chat_req)
-        self.CHAT_MODEL:  str  = os.environ.get("CHAT_MODEL",  "Qwen/Qwen2.5-3B-Instruct")
+        self.CHAT_MODEL:  str  = os.environ.get("CHAT_MODEL",  "Qwen/Qwen2.5-1.5B-Instruct")
         self.FALLBACK_CHAT_MODEL: str = os.environ.get("FALLBACK_CHAT_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
         self.CHAT_DTYPE        = _select_dtype(self.CHAT_DEVICE)
 
@@ -458,9 +462,21 @@ class _Config:
         rows = [
             ("VietOCR config.yml",   r["vietocr_config"]),
             ("VietOCR weights",      r["vietocr_weights"]),
-            ("Chat model (primary)", r["chat_primary"]),
-            ("Chat model (fallback)",r["chat_fallback"]),
-            ("AI Rewrite (Qwen)",    r["ai_rewrite"]),
+        ]
+        # Local LLM rows. Policy: Qwen2.5-1.5B-Instruct is the single default for
+        # chat + rewrite + agent. When the model ids are identical (the default),
+        # collapse them into ONE row so the report isn't three redundant lines and
+        # never implies a separate/required larger model.
+        _llm_ids = {self.CHAT_MODEL, self.FALLBACK_CHAT_MODEL, self.QWEN_MODEL}
+        if len(_llm_ids) == 1:
+            rows.append(("Local LLM (chat/rewrite/agent)", r["ai_rewrite"]))
+        else:
+            rows += [
+                ("Chat model (primary)", r["chat_primary"]),
+                ("Chat model (fallback)",r["chat_fallback"]),
+                ("AI Rewrite (Qwen)",    r["ai_rewrite"]),
+            ]
+        rows += [
             ("PhoBERT summarize",    r["phobert"]),
             ("Embeddings (RAG)",     r["embeddings"]),
             ("Argos offline transl.",r["argos"]),
@@ -478,7 +494,7 @@ class _Config:
             + ("cached" if paddle['paddle_rec'] else "downloads on first OCR run (needs internet once)"),
         ]
         for label, (ok, detail) in rows:
-            lines.append(f"  {mark(ok)} {label:<21}: {detail}")
+            lines.append(f"  {mark(ok)} {label:<30}: {detail}")
         # Feature usability rollup
         chat_ok = r["chat_primary"][0] or r["chat_fallback"][0]
         vietocr_ok = r["vietocr_config"][0] and r["vietocr_weights"][0]

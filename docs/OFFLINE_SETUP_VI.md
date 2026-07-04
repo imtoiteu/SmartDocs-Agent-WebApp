@@ -39,16 +39,18 @@ hãy kích hoạt venv trước hoặc chạy bằng Python của venv:
 | Paddle OCR Legacy / Modern | cache mô hình PaddleX | `setup_offline.py` (hoặc lần OCR đầu có mạng) | tải ở lần chạy đầu (cần mạng một lần) |
 | **VietOCR** | `models/vietocr/config.yml` **+** `vgg_transformer.pth` | `setup_offline.py` | OCR trả lỗi rõ ràng "chạy setup_offline" |
 | **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 trong HF cache mặc định + máy chủ MLX | `setup_glm.sh --precache-layout` | lỗi "pipeline.layout.model_dir is required" / thông báo server chưa chạy |
-| **AI Chat** | Qwen chat **chính (3B)** + **dự phòng (1.5B)** | `setup_offline.py` | "No chat model could be loaded" |
-| **AI Rewrite** | Qwen rewrite (1.5B) | `setup_offline.py` | không viết lại được (dùng cloud nếu có API key) |
+| **AI Chat / AI Rewrite / Agent** | LLM cục bộ **Qwen 2.5 1.5B** (mặc định, `CHAT_MODEL` = `QWEN_MODEL` = `FALLBACK_CHAT_MODEL`) | `setup_offline.py` | "No chat model could be loaded" |
 | Tóm tắt PhoBERT | `vinai/phobert-base-v2` | `setup_offline.py` | **fallback** sang TF-IDF trích xuất (vẫn chạy) |
 | Embeddings RAG | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | `setup_offline.py` | **fallback** sang truy hồi char-hash (vẫn chạy) |
 | **Dịch offline** | gói Argos trong `models/argos/packages/` | `setup_offline.py` | vẫn dịch online bằng Google |
 
 Lưu ý:
 
-- **Chat chính (3B) ≠ rewrite/dự phòng (1.5B).** Là các mô hình khác nhau;
-  `setup_offline.py` tải trọn bộ (đã khử trùng lặp) để cả chat và rewrite đều chạy.
+- **LLM cục bộ mặc định = Qwen 2.5 1.5B-Instruct.** Chat, viết lại AI và provider
+  cục bộ của agent đều dùng nó, nên `setup_offline.py` chỉ tải **một lần**. Các mô
+  hình lớn hơn (vd 3B) **không** phải mặc định và **không** được tải trừ khi bạn đặt
+  `CHAT_MODEL`/`QWEN_MODEL` trong `.env` — 3B là tuỳ chọn, tự bật. Thiếu 3B **không**
+  khiến chat/rewrite báo hỏng.
 - **Mô hình layout GLM nằm trong HF cache MẶC ĐỊNH** (`~/.cache/huggingface`), không
   phải trong `models/`. `glm_adapter.py` cố ý bỏ `HF_HOME` trước khi gọi `glmocr`,
   nên checkpoint layout phải được cache ở đó. `setup_glm.sh --precache-layout` tải

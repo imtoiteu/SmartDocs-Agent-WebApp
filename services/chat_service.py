@@ -3,8 +3,9 @@ SmartDocs Platform — AI Chat Service
 ======================================
 RAG pipeline for document-aware AI chat.
 
-Primary model  : Qwen/Qwen2.5-3B-Instruct  (cfg.CHAT_MODEL)
+Primary model  : Qwen/Qwen2.5-1.5B-Instruct (cfg.CHAT_MODEL)  — default local LLM
 Fallback model : Qwen/Qwen2.5-1.5B-Instruct (cfg.FALLBACK_CHAT_MODEL)
+(Both default to the same 1.5B model; larger models like 3B are opt-in via .env.)
 
 Embedding:
   1. sentence-transformers multilingual (paraphrase-multilingual-MiniLM-L12-v2)

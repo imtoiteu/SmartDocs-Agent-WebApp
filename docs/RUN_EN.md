@@ -54,9 +54,10 @@ once while online. Run this **inside the main venv**:
 .venv/bin/python tools/setup_offline.py     # or ../.venv/bin/python tools/setup_offline.py
 ```
 
-This caches: the Qwen chat models (primary 3B + fallback 1.5B), the Qwen rewrite
-model (1.5B), PhoBERT, the RAG embedding model, the PaddleOCR models, the VietOCR
-weights **and** `models/vietocr/config.yml`, and the Argos translation packages.
+This caches: the **default local LLM Qwen 2.5 1.5B** (used for chat, AI rewrite
+and the agent), PhoBERT, the RAG embedding model, the PaddleOCR models, the
+VietOCR weights **and** `models/vietocr/config.yml`, and the Argos translation
+packages. Larger models (e.g. 3B) are downloaded only if you opt in via `.env`.
 Full guide: **[OFFLINE_SETUP_EN.md](OFFLINE_SETUP_EN.md)**.
 
 ## 3. Start

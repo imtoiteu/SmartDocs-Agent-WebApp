@@ -50,16 +50,22 @@ errors = []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  1. Qwen LLMs — AI Rewrite (QWEN_MODEL) + AI Chat primary/fallback
-#     (CHAT_MODEL / FALLBACK_CHAT_MODEL). These are DISTINCT models: Chat defaults
-#     to Qwen2.5-3B while Rewrite defaults to 1.5B. Caching only one leaves the
-#     other feature broken offline, so we download the full deduped set here.
+#  1. Qwen local LLM(s) — chat (CHAT_MODEL / FALLBACK_CHAT_MODEL) + AI rewrite
+#     (QWEN_MODEL) + agent local provider.
+#     DEFAULT LOCAL LLM POLICY: Qwen2.5-1.5B-Instruct is the single default for
+#     ALL local LLM features. With the shipped defaults these three ids are the
+#     SAME model, so only Qwen2.5-1.5B is downloaded. A larger model (e.g. 3B) is
+#     downloaded ONLY if you explicitly set CHAT_MODEL/QWEN_MODEL in .env — it is
+#     never fetched by default (unstable on Apple-Silicon MPS for this app).
 # ══════════════════════════════════════════════════════════════════════════════
 _qwen_models = []
 for _m in (cfg.QWEN_MODEL, cfg.CHAT_MODEL, cfg.FALLBACK_CHAT_MODEL):
     if _m and _m not in _qwen_models:
         _qwen_models.append(_m)
-print(f"\n[1/5] Qwen LLMs — {', '.join(_qwen_models)}")
+if len(_qwen_models) == 1:
+    print(f"\n[1/5] Local LLM (default) — {_qwen_models[0]}  [chat + rewrite + agent]")
+else:
+    print(f"\n[1/5] Local LLMs — {', '.join(_qwen_models)}  (extra model(s) from .env opt-in)")
 try:
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -68,7 +74,7 @@ try:
         try:
             print(f"  ↓ {_m} — tokenizer…")
             AutoTokenizer.from_pretrained(_m)
-            print(f"  ↓ {_m} — weights (1.5B≈3 GB / 3B≈6 GB, please wait)…")
+            print(f"  ↓ {_m} — weights (1.5B≈3 GB / larger models bigger, please wait)…")
             AutoModelForCausalLM.from_pretrained(_m, torch_dtype=torch.float32)
             print(f"  ✅ {_m} ready")
         except Exception as e:
@@ -136,6 +142,18 @@ try:
     img.save(str(test_img))
 
     print("  Initializing PaddleOCR (downloads models on first use)…")
+    # Stability: this script has already loaded torch/transformers above, and
+    # PaddlePaddle installs a Google-glog FailureSignalHandler that hijacks
+    # SIGSEGV/SIGABRT. With torch + paddle sharing one process (as here and in the
+    # Flask app), that handler can turn a benign worker-thread condition into a
+    # fatal crash while it symbolizes a stack (observed in a macOS .ips: libpaddle
+    # FailureSignalHandler → SymbolizeAndDemangle). Disabling it lets Python handle
+    # signals normally. Best-effort; never fatal if the API is unavailable.
+    try:
+        import paddle
+        paddle.disable_signal_handler()
+    except Exception:
+        pass
     from paddleocr import PaddleOCR
     ocr = PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False)
     ocr.predict(str(test_img))

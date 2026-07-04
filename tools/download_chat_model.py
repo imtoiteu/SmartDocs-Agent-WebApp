@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-SmartDocs Platform — Download Qwen2.5-3B-Instruct for AI Chat
-==============================================================
-Run this once to download the primary chat model.
+SmartDocs Platform — Download the configured AI Chat model
+==========================================================
+Downloads whatever CHAT_MODEL resolves to (default: the local LLM
+Qwen/Qwen2.5-1.5B-Instruct). Use this to OPT INTO a larger chat model: set
+CHAT_MODEL=Qwen/Qwen2.5-3B-Instruct (or another id) in .env first, then run this.
+For the standard 1.5B default, `tools/setup_offline.py` already downloads it.
 The model is cached in models/huggingface/ (same dir as existing models).
 
 Usage:
     source .venv/bin/activate  (or your venv)
+    # optional: export CHAT_MODEL=Qwen/Qwen2.5-3B-Instruct   # opt into a bigger model
     python tools/download_chat_model.py
 
 Requirements:
@@ -25,7 +29,7 @@ import os
 os.environ.pop("HF_HUB_OFFLINE",       None)
 os.environ.pop("TRANSFORMERS_OFFLINE",  None)
 
-MODEL_ID = cfg.CHAT_MODEL  # Qwen/Qwen2.5-3B-Instruct
+MODEL_ID = cfg.CHAT_MODEL  # default Qwen/Qwen2.5-1.5B-Instruct; larger models opt-in via .env
 
 def check_exists(model_id: str) -> bool:
     repo = "models--" + model_id.replace("/", "--")
@@ -39,7 +43,7 @@ def main():
     print("=" * 60)
     print(f"  Model      : {MODEL_ID}")
     print(f"  Cache dir  : {cfg.HF_DIR}")
-    print(f"  Approx size: ~6–7 GB")
+    print(f"  Approx size: ~3 GB (1.5B) / ~6–7 GB (3B)")
     print()
 
     if check_exists(MODEL_ID):

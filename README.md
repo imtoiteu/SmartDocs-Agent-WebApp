@@ -41,8 +41,8 @@ work immediately, but **chat, AI rewrite, VietOCR, offline translation and GLM O
 need a one-time online priming**:
 
 ```bash
-.venv/bin/python tools/setup_offline.py   # cache chat+rewrite (Qwen), PhoBERT,
-                                          # embeddings, VietOCR weights+config.yml, Argos
+.venv/bin/python tools/setup_offline.py   # cache local LLM (Qwen 2.5 1.5B — chat/rewrite/agent),
+                                          # PhoBERT, embeddings, VietOCR weights+config.yml, Argos
 scripts/check_offline.sh                  # report: each feature usable / needs-setup / fallback
 ```
 
@@ -147,7 +147,7 @@ run_windows.bat         # Windows
 | Correction (rule-based), extractive summarization, text reading | ✅ | — |
 | Translation (online) | ✅ (needs internet) | — |
 | Translation (offline / Argos) | — | `tools/setup_offline.py` (Argos packages in `MODEL_DIR`) |
-| RAG chat (Qwen 3B + 1.5B) / AI rewrite (Qwen 1.5B) | — with `OFFLINE=1` | `tools/setup_offline.py` caches all three models |
+| RAG chat / AI rewrite / agent (local **Qwen 2.5 1.5B**, the default) | — with `OFFLINE=1` | `tools/setup_offline.py` caches the 1.5B model (larger models opt-in via `.env`) |
 | Agent with cloud LLMs (Groq / Gemini) | — | API keys in `.env` (falls back to local Qwen) |
 
 Verify readiness anytime with **`scripts/check_offline.sh`**.

@@ -39,16 +39,18 @@ scripts/start.sh                        # run the stack
 | Legacy / Modern Paddle OCR | PaddleX model cache | `setup_offline.py` (or first online OCR run) | downloads on first run (needs internet once) |
 | **VietOCR** | `models/vietocr/config.yml` **+** `vgg_transformer.pth` | `setup_offline.py` | OCR returns a clear "run setup_offline" error |
 | **GLM OCR** | `.venv-sdk` + `mlx_config.yaml` (`pipeline.layout.model_dir`) + PP-DocLayoutV3 in the default HF cache + MLX server | `setup_glm.sh --precache-layout` | "pipeline.layout.model_dir is required" / server-not-running toast |
-| **AI Chat** | Qwen chat **primary (3B)** + **fallback (1.5B)** | `setup_offline.py` | "No chat model could be loaded" |
-| **AI Rewrite** | Qwen rewrite (1.5B) | `setup_offline.py` | rewrite unavailable (cloud fallback if keys set) |
+| **AI Chat / AI Rewrite / Agent** | local **Qwen 2.5 1.5B** (the default, `CHAT_MODEL` = `QWEN_MODEL` = `FALLBACK_CHAT_MODEL`) | `setup_offline.py` | "No chat model could be loaded" |
 | PhoBERT summarization | `vinai/phobert-base-v2` | `setup_offline.py` | **falls back** to extractive TF-IDF (still works) |
 | RAG embeddings | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | `setup_offline.py` | **falls back** to char-hash retrieval (still works) |
 | **Offline translation** | Argos packages in `models/argos/packages/` | `setup_offline.py` | online Google translate still works |
 
 Notes:
 
-- **Chat primary (3B) ≠ rewrite/fallback (1.5B).** They are different models;
-  `setup_offline.py` now downloads the full deduped set so chat + rewrite both work.
+- **Default local LLM = Qwen 2.5 1.5B-Instruct.** Chat, AI rewrite and the agent's
+  local provider all use it, so `setup_offline.py` downloads it **once**. Larger
+  models (e.g. 3B) are **not** the default and are **not** downloaded unless you set
+  `CHAT_MODEL`/`QWEN_MODEL` in `.env` — the 3B model is optional and opt-in. A
+  missing 3B never makes chat/rewrite report themselves as broken.
 - **GLM layout model lives in the DEFAULT HF cache** (`~/.cache/huggingface`), not
   in `models/`. `glm_adapter.py` deliberately strips `HF_HOME` before shelling out
   to `glmocr`, so the layout checkpoint must be cached there. `setup_glm.sh

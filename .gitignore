@@ -79,3 +79,6 @@ Thumbs.db
 .claude/
 # Fix/debug context bundles dropped in by the developer — never publish these
 CLAUDE_FIX_CONTEXT/
+# macOS / crash reports (may contain local paths + memory) — never publish
+*.ips
+*.crash

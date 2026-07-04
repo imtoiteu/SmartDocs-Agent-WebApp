@@ -847,7 +847,7 @@ def d_appendix():
     d.node('r_chat', 944, 496, 222, 50, 'chat() · retrieve_chunks ·\nchunk_text (400/80)', 'rag', parent='RAG', fontsize=9)
     d.node('r_emb', 944, 560, 222, 54, 'EmbeddingEngine\nSBERT → HashingVectorizer\n(16384-dim, L2-norm)', 'rag', parent='RAG', fontsize=8.5)
     d.node('r_idx', 944, 626, 222, 54, 'DocumentIndex · _index_cache\nFAISS IndexFlatIP (cosine)\nin-memory per file_id', 'rag', parent='RAG', fontsize=8.5)
-    d.node('r_gen', 944, 692, 222, 54, '_run_inference — Qwen chat model\nCHAT_MODEL 3B / fallback 1.5B\ncancellable · MPS→CPU fallback', 'rag', parent='RAG', fontsize=8.5)
+    d.node('r_gen', 944, 692, 222, 54, '_run_inference — Qwen chat model\nCHAT_MODEL 1.5B default (3B opt-in)\ncancellable · MPS→CPU fallback', 'rag', parent='RAG', fontsize=8.5)
     d.node('r_rebuild', 944, 758, 222, 44, 'rebuild_indexes_from_db\nllm_registry (shared weights)', 'rag', parent='RAG', fontsize=9)
 
     # Agent

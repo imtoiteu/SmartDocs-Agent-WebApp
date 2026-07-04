@@ -17,7 +17,7 @@ Everything here is verified against the repository (`requirements.txt`, `config.
 | **git** | To clone the repository. |
 | **Node / npm** | **Not required.** The frontend is plain vendored JavaScript (`static/`, with `marked`/`katex` under `static/vendor/`). There is no `package.json`, bundler, or build step. |
 | **Disk** | Several GB for Python wheels (torch, paddle) plus AI model weights. ~10 GB is a safe rule of thumb (approximate). |
-| **RAM** | 8 GB minimum for CPU operation; 16 GB recommended if you use the 3B chat model and OCR concurrently (approximate — not a hard requirement in code). |
+| **RAM** | 8 GB minimum for CPU operation (enough for the default 1.5B local LLM); 16 GB recommended only if you opt into a larger chat model (e.g. 3B) and run OCR concurrently (approximate — not a hard requirement in code). |
 | **OS** | macOS (Apple Silicon & Intel), Ubuntu/Linux, Windows. The **GLM-OCR** engine additionally needs Apple Silicon + MLX (see §6). |
 
 The other three OCR engines and all AI services are cross-platform.
@@ -187,7 +187,7 @@ Copy `.env.example` → `.env` and override what you need. The app works with de
 |---|---|
 | `QWEN_MODEL` | `Qwen/Qwen2.5-1.5B-Instruct` (AI rewrite / OCR cleanup) |
 | `QWEN_DEVICE` | `cpu` (when global `DEVICE` is `mps`/`cpu`) |
-| `CHAT_MODEL` | `Qwen/Qwen2.5-3B-Instruct` (RAG chat primary) |
+| `CHAT_MODEL` | `Qwen/Qwen2.5-1.5B-Instruct` (RAG chat — default local LLM; larger models like 3B are opt-in) |
 | `FALLBACK_CHAT_MODEL` | `Qwen/Qwen2.5-1.5B-Instruct` |
 | `CHAT_DEVICE` | `cpu` (when global `DEVICE` is `mps`/`cpu`) |
 | `PHOBERT_MODEL` | `vinai/phobert-base-v2` (Vietnamese summarization) |
@@ -289,9 +289,11 @@ GEMINI_MODEL=gemini-2.0-flash           # default
 ### Local Qwen (always-available fallback)
 - No key needed. Uses the locally loaded Qwen model via `services/ai_rewrite_service.py`
   (`QWEN_MODEL`, default `Qwen/Qwen2.5-1.5B-Instruct`).
-- Download the chat models for the RAG `chat` surface with:
+- The RAG `chat` surface uses the same default local LLM (`CHAT_MODEL`, default
+  `Qwen/Qwen2.5-1.5B-Instruct`); `tools/setup_offline.py` already caches it. To
+  opt into a larger chat model, set `CHAT_MODEL` in `.env`, then:
   ```bash
-  python tools/download_chat_model.py   # fetches Qwen2.5-3B-Instruct into models/huggingface/
+  python tools/download_chat_model.py   # fetches the configured CHAT_MODEL into models/huggingface/
   ```
 
 ### Fallback behavior (verified in `agent/core/provider.py`)
@@ -338,7 +340,7 @@ pytest discovery. (No coverage/CI config is present in the repo.)
 | Script | Purpose (from its docstring) |
 |---|---|
 | `setup_offline.py` | Run once online to download all required models into `MODEL_DIR` for offline use. |
-| `download_chat_model.py` | Download Qwen2.5-3B-Instruct into `models/huggingface/`. |
+| `download_chat_model.py` | Download the configured `CHAT_MODEL` (default 1.5B; set a larger id in `.env` to opt in) into `models/huggingface/`. |
 | `warmup_modern_models.py` | Fetch the PaddleOCR Modern (PP-StructureV3/PP-OCRv6) models online once. |
 | `glm_serve.sh` | Start the local GLM-OCR MLX server on `:8080`. |
 | `ab_harness.py`, `eval_model.py` | Provider/model benchmarking (developer tools). |
