@@ -153,7 +153,27 @@ run_windows.bat         # Windows
 
 Verify readiness anytime with **`scripts/check_offline.sh`**.
 
-Full instructions: **[docs/INSTALLATION.md](docs/INSTALLATION.md)**.
+### Platform support matrix
+
+Development happens on macOS Apple Silicon and Linux; those columns are verified.
+Windows columns are *expected* from the codebase (CPU torch/paddle wheels,
+`run_windows.bat`, `platform_system` markers in `requirements.txt`) but not
+regularly tested — prefer **WSL** on Windows for the scripted flow.
+
+| Feature | macOS Apple Silicon | Linux | Windows | Notes |
+|---|---|---|---|---|
+| Web app (Flask + SPA) | ✅ | ✅ | ✅ expected | `scripts/*.sh` need Git Bash/WSL on Windows; native: `run_windows.bat` or manual venv |
+| PaddleOCR (Legacy + Modern) | ✅ | ✅ | ✅ expected | models auto-cache to `~/.paddlex/official_models/` on first online OCR run |
+| VietOCR | ✅ | ✅ | ✅ expected | needs `scripts/setup_offline.sh` (weights + `config.yml`) |
+| GLM OCR — **local MLX server** | ✅ | ❌ | ❌ | `mlx`/`mlx-vlm` wheels are **macOS/arm64 only**; set `ENABLE_GLM=false` elsewhere (or leave it — `start.sh` just warns and continues) |
+| GLM OCR — external server | ✅ | ⚠️ unverified | ⚠️ unverified | point `GLM_OCR_API_URL` at a running GLM server; the `glmocr` CLI venv (`GLM-OCR/.venv-sdk`, plain torch) is still needed locally |
+| Argos offline translation | ✅ | ✅ | ✅ expected | packages in `models/argos/packages/` via `scripts/setup_offline.sh` |
+| Qwen 2.5 1.5B chat / AI rewrite / agent | ✅ (CPU) | ✅ (CPU / CUDA) | ✅ expected (CPU / CUDA) | the default local LLM; larger models opt-in via `.env` |
+| Embeddings / RAG | ✅ | ✅ | ✅ expected | char-hash retrieval fallback if the model is missing |
+| Desktop packaging (Electron/Tauri) | 🔜 plan | 🔜 plan | 🔜 plan | [docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md) is a **plan**, not implemented |
+
+Full instructions: **[docs/INSTALLATION.md](docs/INSTALLATION.md)** (per-OS setup).
+Clean-clone walkthrough: **[docs/RUN_EN.md](docs/RUN_EN.md)** · **[docs/RUN_VI.md](docs/RUN_VI.md)**.
 Production deployment: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 ---

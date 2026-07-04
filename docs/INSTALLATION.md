@@ -93,6 +93,26 @@ Notes:
   dependency) on headless Linux. Install them if OCR import fails.
 - To use a GPU, also set `DEVICE=cuda` in `.env`.
 
+**GLM OCR on Linux** — the local **MLX server is NOT supported** (the `mlx` /
+`mlx-vlm` wheels exist only for macOS/arm64). Everything else runs. Options:
+
+- **Run without GLM (recommended):** set `ENABLE_GLM=false` in `.env` so
+  `scripts/start.sh` doesn't attempt the server. (Leaving it `true` is harmless —
+  the script warns and continues; only the GLM engine button in the UI errors.)
+  PaddleOCR Legacy/Modern and VietOCR are unaffected.
+- **Use an external GLM server (UNVERIFIED on Linux):** point the app at a GLM
+  OCR HTTP server running elsewhere (e.g. an Apple-Silicon Mac on the LAN):
+  ```bash
+  # .env
+  GLM_OCR_API_URL=http://<glm-host>:8080
+  # GLM_OCR_DIR=/path/to/GLM-OCR             # only if the vendored dir moved
+  # GLM_SDK_PYTHON=/path/to/.venv-sdk/bin/python
+  ```
+  The adapter still shells out to the local `glmocr` CLI (`GLM-OCR/.venv-sdk`,
+  plain torch — `scripts/setup_glm.sh` builds it and skips the MLX-only steps on
+  non-Apple hosts), which then calls the remote server. This path is expected to
+  work but has not been validated end-to-end on Linux.
+
 ---
 
 ## 4. Windows
@@ -122,8 +142,30 @@ Or simply run `run_windows.bat`, which activates the venv, copies `.env`, instal
 starts the app.
 
 Notes:
-- The **GLM-OCR** engine is not available on Windows (it relies on Apple MLX — see §6).
-- All other engines and AI services run on Windows (CPU, or CUDA with a GPU torch build).
+- **Python 3.10** is the verified version (same as macOS/Linux).
+- **Shells:** the `scripts/*.sh` launchers are **bash** scripts — on Windows they
+  require **Git Bash** or **WSL**. Two supported approaches:
+  - **WSL (recommended for the scripted flow):** inside WSL, follow the Linux
+    section above verbatim (`scripts/setup.sh`, `scripts/setup_offline.sh`, …).
+  - **Native PowerShell/cmd:** use the manual steps above or `run_windows.bat`;
+    there is no `.sh` wrapper, so prime offline models with the venv's Python
+    directly:
+    ```bat
+    .venv\Scripts\activate
+    python tools\setup_offline.py
+    ```
+    (`tools/setup_offline.py` prints which interpreter it runs under and warns
+    if it looks wrong.)
+- **GLM OCR is not supported natively on Windows** — the MLX server needs Apple
+  Silicon. Set `ENABLE_GLM=false` in `.env` (only relevant if you use the bash
+  scripts; the native app simply reports the GLM engine unavailable when
+  selected). An **external** GLM server (`GLM_OCR_API_URL=http://<glm-host>:8080`)
+  is the same UNVERIFIED path as described in the Linux section.
+- Paths in `.env` accept Windows form (e.g. `MODEL_DIR=C:\smartdocs\models`);
+  the defaults (relative `./models` etc.) work unchanged.
+- All other engines and AI services run on Windows (CPU, or CUDA with a GPU torch
+  build) — expected from the codebase, not regularly tested (see the platform
+  matrix in the README).
 
 ---
 

@@ -6,6 +6,52 @@ trong `scripts/`. Các script tự động tìm virtualenv Python và đường 
 
 > GLM OCR là **tuỳ chọn** và chỉ chạy trên Apple Silicon (MLX). Ứng dụng web và
 > các engine Legacy / VietOCR / Modern vẫn hoạt động bình thường khi không có GLM.
+> **Linux / Windows:** xem [INSTALLATION.md](INSTALLATION.md) và ma trận hỗ trợ nền
+> tảng trong README — mọi thứ dưới đây (trừ GLM MLX server) đều áp dụng
+> (Windows cần Git Bash hoặc WSL để chạy `scripts/*.sh`).
+
+---
+
+## 0. Quy trình clone sạch (macOS Apple Silicon)
+
+Chuỗi lệnh đầy đủ từ số 0 — clone đến chạy app. Chạy một lần khi có mạng;
+sau đó app hoạt động hoàn toàn offline.
+
+```bash
+git clone <repo-url> SmartDocs-Agent
+cd SmartDocs-Agent
+chmod +x scripts/*.sh tools/*.sh        # git thường giữ sẵn quyền này; chắc ăn thì chạy
+cp .env.example .env                    # mặc định là đủ để test cục bộ
+
+scripts/setup.sh                        # 1. venv chính + requirements + thư mục
+scripts/setup_glm.sh --precache-layout  # 2. venv GLM + mô hình layout (Apple Silicon)
+scripts/setup_offline.sh                # 3. TẤT CẢ mô hình AI offline (Qwen 1.5B, PhoBERT,
+                                        #    embeddings, VietOCR weights+config, Argos, Paddle)
+scripts/check.sh                        # 4. kiểm tra môi trường / runtime
+scripts/check_offline.sh                # 5. kiểm tra mô hình + smoke test dịch Argos THẬT
+
+scripts/start_glm.sh -b                 # 6. GLM MLX server chạy nền (logs/glm.log)
+scripts/start.sh                        # 7. web app (foreground) → http://localhost:5002
+```
+
+Đăng nhập bằng tài khoản seed lần đầu — **đổi mật khẩu ngay**:
+`admin / admin123` (quản trị) hoặc `user / user123`; quản lý trong `/admin`.
+
+**Sau các bước trên, tất cả những mục sau phải hoạt động** (danh sách nghiệm thu
+clone sạch):
+
+- đăng nhập, upload, quản lý tài liệu
+- PaddleOCR **Legacy** và **Modern** (mô hình đã cache ở bước 3)
+- **VietOCR** (weights + `models/vietocr/config.yml` từ bước 3)
+- **GLM OCR** (MLX server bước 6 + mô hình layout bước 2)
+- **Chat**, **AI Rewrite** và **Agent** trên **Qwen 2.5 1.5B** cục bộ (không bao
+  giờ được tải mô hình 3B)
+- dịch **online** (Google, cần mạng) và dịch **offline** (Argos — bước 5 đã smoke
+  test thật en→vi và vi→en)
+- tóm tắt (PhoBERT + fallback trích xuất), embeddings RAG ngữ nghĩa
+
+Nếu dòng nào của `scripts/check_offline.sh` là ❌, thông báo sẽ nêu đúng lệnh cần
+chạy lại — sửa xong mới test UI.
 
 ---
 

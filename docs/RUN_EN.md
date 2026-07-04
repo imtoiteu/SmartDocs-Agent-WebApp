@@ -6,6 +6,52 @@ paths automatically — **you never have to activate a venv or `cd` anywhere.**
 
 > GLM OCR is **optional** and runs only on Apple Silicon (MLX). The web app and
 > the Legacy / VietOCR / Modern OCR engines work fine without it.
+> **Linux / Windows:** see [INSTALLATION.md](INSTALLATION.md) and the platform
+> support matrix in the README — everything below except the GLM MLX server
+> applies there too (Windows needs Git Bash or WSL for `scripts/*.sh`).
+
+---
+
+## 0. Clean-clone quick path (macOS Apple Silicon)
+
+The complete from-zero sequence — clone to running app. Run each step online
+once; afterwards the app works fully offline.
+
+```bash
+git clone <repo-url> SmartDocs-Agent
+cd SmartDocs-Agent
+chmod +x scripts/*.sh tools/*.sh        # git usually preserves this; belt & braces
+cp .env.example .env                    # defaults are fine for local testing
+
+scripts/setup.sh                        # 1. main venv + requirements + folders
+scripts/setup_glm.sh --precache-layout  # 2. GLM venvs + layout model (Apple Silicon)
+scripts/setup_offline.sh                # 3. ALL offline AI models (Qwen 1.5B, PhoBERT,
+                                        #    embeddings, VietOCR weights+config, Argos, Paddle)
+scripts/check.sh                        # 4. environment / runtime check
+scripts/check_offline.sh                # 5. model readiness + REAL Argos translation smoke test
+
+scripts/start_glm.sh -b                 # 6. GLM MLX server in background (logs/glm.log)
+scripts/start.sh                        # 7. web app (foreground) → http://localhost:5002
+```
+
+Log in with the first-run seeded accounts — **change them immediately**:
+`admin / admin123` (admin) or `user / user123` (user); manage in `/admin`.
+
+**After these steps, all of the following must work** (this is the clean-clone
+acceptance list):
+
+- login, upload, document management
+- PaddleOCR **Legacy** and **Modern** OCR (models cached by step 3)
+- **VietOCR** OCR (weights + `models/vietocr/config.yml` from step 3)
+- **GLM OCR** (MLX server from step 6 + layout model from step 2)
+- AI **Chat**, **AI Rewrite** and the **Agent** on the local **Qwen 2.5 1.5B** (no
+  3B download must ever be triggered)
+- **online** translation (Google, needs internet) and **offline** translation
+  (Argos — step 5 already smoke-tested en→vi and vi→en for real)
+- summarization (PhoBERT + extractive fallback), semantic RAG embeddings
+
+If any line of `scripts/check_offline.sh` is ❌, its message names the exact
+re-run command — fix before testing the UI.
 
 ---
 
