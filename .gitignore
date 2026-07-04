@@ -1,0 +1,68 @@
+# ── Secrets / environment ──────────────────────────────────────────────────
+# NEVER commit real keys. .env holds live GROQ_API_KEY / GEMINI_API_KEY.
+.env
+.env.*
+!.env.example
+
+# ── User data (private; not for the repo) ──────────────────────────────────
+# SQLite DB holds user accounts, password hashes, OCR results, chat history.
+*.db
+*.sqlite
+*.sqlite3
+# Uploaded user documents (IDOR-sensitive private files).
+uploads/
+# Generated OCR outputs / artifacts.
+artifacts/
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Virtual environments ───────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Model weights / caches (shared from SmartDocs; not vendored here) ───────
+models/
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+# HuggingFace / MLX / other large model caches (never commit these)
+.cache/
+hf_cache/
+*.gguf
+*.mlx
+
+# ── Node / desktop build output (Tauri/Electron wrapper, future) ────────────
+node_modules/
+build/
+dist/
+
+# ── Logs / temp ────────────────────────────────────────────────────────────
+# Runtime logs + PID files written by scripts/ into logs/. Keep the folder
+# (logs/.gitkeep) but ignore everything generated inside it.
+logs/
+!logs/.gitkeep
+*.log
+*.tmp
+*.pid
+/tmp/
+
+# ── OS / editor cruft ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# ── Local agent / editor scaffolding (not application code) ────────────────
+.claude/
