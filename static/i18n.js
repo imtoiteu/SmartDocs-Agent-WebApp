@@ -23,6 +23,24 @@ const TRANSLATIONS = {
     nav_settings:      '⚙ Cài đặt',
     nav_sign_out:      '⏏ Đăng xuất',
 
+    // Sidebar labels (icon lives in a separate span; labels are icon-free)
+    sb_home:           'Trang chủ',
+    sb_ocr:            'OCR',
+    sb_correct:        'Sửa lỗi',
+    sb_translate:      'Dịch thuật',
+    sb_summarize:      'Tóm tắt',
+    sb_documents:      'Tài liệu',
+    sb_chat:           'SmartDocs AI',
+    sb_agent:          'Agent',
+    sb_settings:       'Cài đặt',
+    sb_admin:          'Quản trị',
+    sidebar_collapse:  'Thu gọn thanh bên',
+    sidebar_expand:    'Mở rộng thanh bên',
+    sidebar_open:      'Mở điều hướng',
+
+    // Top-bar chips
+    privacy_chip_local: '🔒 Chỉ cục bộ',
+    privacy_chip_cloud: '☁ Đám mây',
     // Settings (cloud keys + privacy)
     settings_privacy_title: '🔒 Quyền riêng tư — nơi xử lý AI',
     settings_privacy_desc:  '“Cho phép xử lý đám mây” nghĩa là văn bản tài liệu, trích đoạn và câu lệnh có thể được gửi đến nhà cung cấp đám mây đã cấu hình. “Chỉ cục bộ” giữ mọi thứ trên máy này (dịch ngoại tuyến, mô hình cục bộ).',
@@ -331,6 +349,24 @@ const TRANSLATIONS = {
     nav_settings:      '⚙ Settings',
     nav_sign_out:      '⏏ Sign Out',
 
+    // Sidebar labels (icon lives in a separate span; labels are icon-free)
+    sb_home:           'Home',
+    sb_ocr:            'OCR',
+    sb_correct:        'Text Correction',
+    sb_translate:      'Translation',
+    sb_summarize:      'Summarization',
+    sb_documents:      'Documents',
+    sb_chat:           'SmartDocs AI',
+    sb_agent:          'Agent',
+    sb_settings:       'Settings',
+    sb_admin:          'Admin',
+    sidebar_collapse:  'Collapse sidebar',
+    sidebar_expand:    'Expand sidebar',
+    sidebar_open:      'Open navigation',
+
+    // Top-bar chips
+    privacy_chip_local: '🔒 Local only',
+    privacy_chip_cloud: '☁ Cloud allowed',
     // Settings (cloud keys + privacy)
     settings_privacy_title: '🔒 Privacy — where AI processing happens',
     settings_privacy_desc:  '“Allow cloud processing” lets AI features send document text, retrieval excerpts and prompts to a configured cloud provider. “Local only” keeps everything on this machine (offline translation, local models).',
@@ -672,10 +708,16 @@ const I18n = {
     document.querySelectorAll('[data-i18n-title]').forEach(el => {
       el.title = this.t(el.dataset.i18nTitle);
     });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+      el.setAttribute('aria-label', this.t(el.dataset.i18nAriaLabel));
+    });
     // Update page <title>
     document.title = `${this.t('app_name')} — AI`;
     // Update html lang attr
     document.documentElement.lang = this._lang;
+    // Let JS-rendered surfaces (sidebar tooltips, settings state text,
+    // top-bar chips) re-render in the new language.
+    document.dispatchEvent(new CustomEvent('sd-lang', { detail: { lang: this._lang } }));
   },
 
   /** Sync the selector buttons in the navbar */
