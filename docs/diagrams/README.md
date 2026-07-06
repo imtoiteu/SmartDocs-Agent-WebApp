@@ -19,7 +19,48 @@ Nguồn sinh: `build_webapp_diagrams.py` (chạy `python3 build_webapp_diagrams.
 | W2 | Model Registry & Router theo tác vụ | `webapp-model-routing.drawio` | `webapp-model-routing.svg` |
 | W3 | Local-only · khóa API · chính sách URL | `webapp-privacy-local-only.drawio` | `webapp-privacy-local-only.svg` |
 
-## Files (backend chung — nhãn tiếng Anh)
+## Bản tiếng Việt của các sơ đồ backend chung (hậu tố `-vi`)
+
+Bản dịch tiếng Việt 1-1 của các sơ đồ backend bên dưới, cùng bố cục với bản gốc
+(sinh bởi `build_diagrams_vi.py` — chạy `python3 build_diagrams_vi.py` để tạo lại).
+Định danh mã nguồn (route, module, bảng CSDL) giữ nguyên; chỉ dịch phần mô tả.
+Hai sơ đồ được **cập nhật theo hiện trạng** trong lúc dịch:
+
+* `backend-architecture-vi` — app hiện đăng ký **6 blueprint**
+  (auth · admin · chat · agent · settings · models, `app.py:84-89`).
+* `provider-fallback-chain-vi` — **vẽ lại hoàn toàn**: bổ sung provider
+  self-hosted (OpenAI-compatible) và chế độ Local-only mà bản gốc chưa có.
+
+| Sơ đồ tiếng Việt | Bản gốc tiếng Anh tương ứng |
+|------------------|------------------------------|
+| `ocr-pipeline-vi.drawio` / `.svg` | #2 |
+| `document-lifecycle-vi.drawio` / `.svg` | #3 |
+| `rag-architecture-vi.drawio` / `.svg` | #4 |
+| `database-erd-vi.drawio` / `.svg` | #6 |
+| `security-architecture-vi.drawio` / `.svg` | #7 |
+| `chat-modes-vi.drawio` / `.svg` | #8 |
+| `use-case-diagram-vi.drawio` / `.svg` | #9 |
+| `functional-decomposition-vi.drawio` / `.svg` | #10 |
+| `document-chat-sequence-vi.drawio` / `.svg` | #12 |
+| `ocr-engine-architecture-vi.drawio` / `.svg` | #14 |
+| `correction-flow-vi.drawio` / `.svg` | #15 |
+| `translation-flow-vi.drawio` / `.svg` | #16 |
+| `summarization-flow-vi.drawio` / `.svg` | #17 |
+| `rag-runtime-flow-vi.drawio` / `.svg` | #18 |
+| `provider-fallback-chain-vi.drawio` / `.svg` | #21 (vẽ lại) |
+| `context-diagram-vi.drawio` / `.svg` | Context Diagram |
+| `dfd-level-1-vi.drawio` / `.svg` | DFD Level 1 |
+| `backend-architecture-vi.drawio` / `.svg` | Backend Architecture |
+| `full-component-architecture-vi.drawio` / `.svg` | Appendix |
+
+Không dịch (giữ bản tiếng Anh): `overall-system-architecture` (đã được thay thế
+bởi W1), `deployment-diagram` (vẫn đúng cho triển khai production), và bộ agent
+chi tiết `agent-architecture` / `agent-execution-flow` / `agent-execution-sequence`
+/ `agent-tool-ecosystem` (vẫn đúng hiện trạng). Lưu ý: `provider-fallback-chain`
+(bản gốc EN) và mục Providers trong `agent-architecture`/`overall-system-architecture`
+chưa có self-hosted + Local-only — xem bản `-vi` / W2 cho hiện trạng.
+
+## Files (backend chung — nhãn tiếng Anh, bản gốc)
 
 | # | Diagram | Editable | Publication |
 |---|---------|----------|-------------|
