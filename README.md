@@ -228,6 +228,23 @@ Production deployment: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 ---
 
+## AI models (Model Registry / Router)
+
+LLM features (Chat / Document QA, Summarization, AI Rewrite, Agent) route
+through one gateway (`agent/core/llm_gateway.py`) over a Model Registry
+(`agent/core/model_registry.py`). Every task defaults to **Automatic** in
+Settings → AI models, which is exactly the pre-existing behavior — the bundled
+Qwen 2.5 1.5B stays the default and the final offline fallback, and all
+existing env configuration (`AGENT_LLM_PROVIDER`, `LLM_PROVIDER`,
+`OPENAI_COMPATIBLE_*`, keys) keeps working and wins over the UI. Beyond that:
+a self-hosted OpenAI-compatible server profile (HTTPS always; plain HTTP for
+localhost; plain HTTP to private-LAN IP literals only behind an explicit
+insecure-LAN confirmation; API key in the OS credential store), imported
+managed-local models (lazy-loaded, unloadable, weights stay where they are),
+and per-task model selection with an optional explicit fallback model. A cloud
+model is never routed while Local-only is enabled, and explicit routes have no
+silent cross-provider fallback.
+
 ## Running tests
 
 ```bash

@@ -130,13 +130,15 @@ def test_cloud_controls_disabled_in_local_only():
 
 
 def test_no_desktop_only_functionality_leaked_into_the_webapp():
-    # Runtime-mode selection, Tauri lifecycle, runtime.json, the insecure-LAN
-    # client option and the desktop runtime panel are DesktopApp-only.
+    # Runtime-mode selection, Tauri lifecycle, runtime.json, the RUNTIME
+    # insecure-LAN chip and the desktop runtime panel are DesktopApp-only.
+    # (The self-hosted model server's allow_insecure_lan option is a SHARED
+    # feature — it lives in Settings → AI models in both apps.)
     for marker in ("settings-runtime-panel", "/desktop/runtime-settings",
                    "topbar-runtime", "topbar-insecure", "runtime.json"):
         assert marker not in INDEX, f"desktop-only marker {marker!r} in index.html"
     for marker in ("__SMARTDOCS_DESKTOP__", "RuntimeChip", "runtime_mode",
-                   "insecure_lan", "/api/desktop/"):
+                   "h.insecure_lan", "/api/desktop/"):
         assert marker not in APP_JS, f"desktop-only marker {marker!r} in app.js"
     assert "runtime_bundled" not in I18N and "runtime_insecure_lan" not in I18N
     # The web UI never renders internal bundle paths.
