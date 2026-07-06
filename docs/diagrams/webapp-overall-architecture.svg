@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1360" height="800" viewBox="0 0 1360 800" font-family="Helvetica, Arial, sans-serif">
+<defs>
+<marker id="arr_3F61A8" markerWidth="11" markerHeight="11" refX="8.5" refY="3.2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,3.2 L0,6.4 Z" fill="#3F61A8"/></marker>
+<marker id="arr_445" markerWidth="11" markerHeight="11" refX="8.5" refY="3.2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,3.2 L0,6.4 Z" fill="#445"/></marker>
+<marker id="arr_5A5A5A" markerWidth="11" markerHeight="11" refX="8.5" refY="3.2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,3.2 L0,6.4 Z" fill="#5A5A5A"/></marker>
+<marker id="arr_6C8EBF" markerWidth="11" markerHeight="11" refX="8.5" refY="3.2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,3.2 L0,6.4 Z" fill="#6C8EBF"/></marker>
+<marker id="arr_9673A6" markerWidth="11" markerHeight="11" refX="8.5" refY="3.2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,3.2 L0,6.4 Z" fill="#9673A6"/></marker>
+<marker id="arr_B85450" markerWidth="11" markerHeight="11" refX="8.5" refY="3.2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,3.2 L0,6.4 Z" fill="#B85450"/></marker>
+<marker id="arr_D6B656" markerWidth="11" markerHeight="11" refX="8.5" refY="3.2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,3.2 L0,6.4 Z" fill="#D6B656"/></marker>
+</defs>
+<rect x="0" y="0" width="1360" height="800" fill="#FFFFFF"/>
+<text x="40" y="40" font-size="22" font-weight="700" fill="#10202E">W1 · Kiến trúc tổng thể SmartDocs WebApp</text>
+<line x1="40" y1="50" x2="1320" y2="50" stroke="#10202E" stroke-width="1.5"/>
+<rect x="40" y="64" width="1280" height="108" rx="11" fill="#F0F6FD" stroke="#6C8EBF" stroke-width="1.6"/>
+<path d="M40.0,98.0 L40.0,75.0 A11,11 0 0 1 51.0,64.0 L1309.0,64.0 A11,11 0 0 1 1320.0,75.0 L1320.0,98.0 Z" fill="#DAE8FC" stroke="#6C8EBF" stroke-width="1.6"/>
+<text x="54.0" y="88.0" font-size="14.5" font-weight="700" fill="#10202E">Trình duyệt (máy khách) — SPA thuần JS, cùng cấu trúc UI với DesktopApp</text>
+<rect x="40" y="196" width="1280" height="104" rx="11" fill="#EEF3FB" stroke="#3F61A8" stroke-width="1.6"/>
+<path d="M40.0,230.0 L40.0,207.0 A11,11 0 0 1 51.0,196.0 L1309.0,196.0 A11,11 0 0 1 1320.0,207.0 L1320.0,230.0 Z" fill="#D4E1F5" stroke="#3F61A8" stroke-width="1.6"/>
+<text x="54.0" y="220.0" font-size="14.5" font-weight="700" fill="#10202E">Flask backend — một tiến trình trên server (app.py)</text>
+<rect x="40" y="324" width="1280" height="112" rx="11" fill="#E0F4F5" stroke="#0E8088" stroke-width="1.6"/>
+<path d="M40.0,358.0 L40.0,335.0 A11,11 0 0 1 51.0,324.0 L1309.0,324.0 A11,11 0 0 1 1320.0,335.0 L1320.0,358.0 Z" fill="#B0E3E6" stroke="#0E8088" stroke-width="1.6"/>
+<text x="54.0" y="348.0" font-size="14.5" font-weight="700" fill="#10202E">Dịch vụ xử lý (services/ · agent/)</text>
+<rect x="40" y="460" width="1280" height="96" rx="11" fill="#F3EFF5" stroke="#9673A6" stroke-width="1.6"/>
+<path d="M40.0,494.0 L40.0,471.0 A11,11 0 0 1 51.0,460.0 L1309.0,460.0 A11,11 0 0 1 1320.0,471.0 L1320.0,494.0 Z" fill="#E1D5E7" stroke="#9673A6" stroke-width="1.6"/>
+<text x="54.0" y="484.0" font-size="14.5" font-weight="700" fill="#10202E">Model Router — llm_gateway.resolve(task): Chat/QA · Tóm tắt · Viết lại AI · Agent</text>
+<rect x="40" y="580" width="760" height="108" rx="11" fill="#FFFAEB" stroke="#D6B656" stroke-width="1.6"/>
+<path d="M40.0,614.0 L40.0,591.0 A11,11 0 0 1 51.0,580.0 L789.0,580.0 A11,11 0 0 1 800.0,591.0 L800.0,614.0 Z" fill="#FFF2CC" stroke="#D6B656" stroke-width="1.6"/>
+<text x="54.0" y="604.0" font-size="14.5" font-weight="700" fill="#10202E">Nhà cung cấp mô hình (Model Registry)</text>
+<path d="M680.0,172.0 L680.0,196.0" fill="none" stroke="#6C8EBF" stroke-width="1.7" marker-end="url(#arr_6C8EBF)"/>
+<rect x="565.0" y="175.0" width="230.0" height="16" rx="3" fill="#FFFFFF" stroke="#6C8EBF" stroke-width="0.8" opacity="0.95"/>
+<text x="680.0" y="186.5" font-size="10.5" fill="#243B4A" text-anchor="middle">HTTP(S) — phiên đăng nhập Flask-Login</text>
+<path d="M680.0,300.0 L680.0,324.0" fill="none" stroke="#3F61A8" stroke-width="1.7" marker-end="url(#arr_3F61A8)"/>
+<path d="M680.0,436.0 L680.0,460.0" fill="none" stroke="#9673A6" stroke-width="1.7" marker-end="url(#arr_9673A6)"/>
+<rect x="586.0" y="439.0" width="188.0" height="16" rx="3" fill="#FFFFFF" stroke="#9673A6" stroke-width="0.8" opacity="0.95"/>
+<text x="680.0" y="450.5" font-size="10.5" fill="#243B4A" text-anchor="middle">mọi lời gọi LLM đều hỏi Router</text>
+<path d="M680.0,556.0 L420.0,580.0" fill="none" stroke="#D6B656" stroke-width="1.7" marker-end="url(#arr_D6B656)"/>
+<path d="M680.0,436.0 L956.0,566.0 L956.0,592.0" fill="none" stroke="#5A5A5A" stroke-width="1.7" stroke-dasharray="6 5" marker-end="url(#arr_5A5A5A)"/>
+<path d="M805.0,156.0 L805.0,184.0 L1330.0,184.0 L1330.0,570.0 L1208.0,570.0 L1208.0,596.0" fill="none" stroke="#B85450" stroke-width="1.7" stroke-dasharray="6 5" marker-end="url(#arr_B85450)"/>
+<rect x="1292.5" y="175.0" width="56.0" height="16" rx="3" fill="#FFFFFF" stroke="#B85450" stroke-width="0.8" opacity="0.95"/>
+<text x="1320.5" y="186.5" font-size="10.5" fill="#243B4A" text-anchor="middle">khóa API</text>
+<rect x="64.0" y="104.0" width="560.0" height="52.0" rx="9" fill="#DAE8FC" stroke="#6C8EBF" stroke-width="1.6"/>
+<text x="344.0" y="126.7" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">SPA chính + sidebar điều hướng</text>
+<text x="344.0" y="140.1" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">Trang chủ · OCR · Sửa lỗi · Dịch · Tóm tắt · Tài liệu · SmartDocs AI · Agent · Cài đặt</text>
+<rect x="640.0" y="104.0" width="330.0" height="52.0" rx="9" fill="#DAE8FC" stroke="#6C8EBF" stroke-width="1.6"/>
+<text x="805.0" y="126.5" font-size="11.5" font-weight="400" fill="#15202B" text-anchor="middle">Trang Cài đặt</text>
+<text x="805.0" y="140.6" font-size="11.5" font-weight="400" fill="#15202B" text-anchor="middle">AI models · Quyền riêng tư · Khóa cloud</text>
+<rect x="986.0" y="104.0" width="310.0" height="52.0" rx="9" fill="#DAE8FC" stroke="#6C8EBF" stroke-width="1.6"/>
+<text x="1141.0" y="126.5" font-size="11.5" font-weight="400" fill="#15202B" text-anchor="middle">Không gian Agent (/agent)</text>
+<text x="1141.0" y="140.6" font-size="11.5" font-weight="400" fill="#15202B" text-anchor="middle">+ Admin console (/admin)</text>
+<rect x="64.0" y="236.0" width="232.0" height="52.0" rx="9" fill="#D4E1F5" stroke="#3F61A8" stroke-width="1.6"/>
+<text x="180.0" y="258.9" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">auth_bp</text>
+<text x="180.0" y="271.7" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">/login · /api/auth/me</text>
+<rect x="314.0" y="236.0" width="232.0" height="52.0" rx="9" fill="#D4E1F5" stroke="#3F61A8" stroke-width="1.6"/>
+<text x="430.0" y="252.4" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">app.py routes</text>
+<text x="430.0" y="265.3" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">/api/upload · /api/ocr/* ·</text>
+<text x="430.0" y="278.1" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">/api/documents/*</text>
+<rect x="564.0" y="236.0" width="232.0" height="52.0" rx="9" fill="#D4E1F5" stroke="#3F61A8" stroke-width="1.6"/>
+<text x="680.0" y="258.9" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">chat_bp · agent_bp</text>
+<text x="680.0" y="271.7" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">/api/chat/* · /api/agent/*</text>
+<rect x="814.0" y="236.0" width="232.0" height="52.0" rx="9" fill="#D4E1F5" stroke="#3F61A8" stroke-width="1.6"/>
+<text x="930.0" y="258.9" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">models_bp</text>
+<text x="930.0" y="271.7" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">/api/models · self-hosted · routing</text>
+<rect x="1064.0" y="236.0" width="232.0" height="52.0" rx="9" fill="#D4E1F5" stroke="#3F61A8" stroke-width="1.6"/>
+<text x="1180.0" y="258.9" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">settings_bp · admin_bp</text>
+<text x="1180.0" y="271.7" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">/api/settings/* · /admin/*</text>
+<rect x="64.0" y="364.0" width="296.0" height="56.0" rx="9" fill="#B0E3E6" stroke="#0E8088" stroke-width="1.6"/>
+<text x="212.0" y="382.0" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">OCR pipeline</text>
+<text x="212.0" y="395.4" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">PaddleOCR (legacy · modern) · VietOCR ·</text>
+<text x="212.0" y="408.8" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">GLM-OCR</text>
+<rect x="376.0" y="364.0" width="296.0" height="56.0" rx="9" fill="#FFE6CC" stroke="#D79B00" stroke-width="1.6"/>
+<text x="524.0" y="388.7" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">Dịch vụ AI</text>
+<text x="524.0" y="402.1" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">sửa lỗi · dịch thuật · tóm tắt · viết lại AI</text>
+<rect x="688.0" y="364.0" width="296.0" height="56.0" rx="9" fill="#D5E8D4" stroke="#82B366" stroke-width="1.6"/>
+<text x="836.0" y="382.0" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">Chat / RAG</text>
+<text x="836.0" y="395.4" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">SBERT / hashing + FAISS — trả lời kèm trích</text>
+<text x="836.0" y="408.8" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">dẫn</text>
+<rect x="1000.0" y="364.0" width="296.0" height="56.0" rx="9" fill="#E1D5E7" stroke="#9673A6" stroke-width="1.6"/>
+<text x="1148.0" y="388.7" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">AgentCore</text>
+<text x="1148.0" y="402.1" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">vòng lặp tool có giới hạn bước + thời gian</text>
+<rect x="64.0" y="500.0" width="612.0" height="44.0" rx="9" fill="#E1D5E7" stroke="#9673A6" stroke-width="1.6"/>
+<text x="370.0" y="525.6" font-size="11.5" font-weight="400" fill="#15202B" text-anchor="middle">auto = hành vi cũ · model chỉ định được kiểm tra, KHÔNG bị thay ngầm</text>
+<rect x="700.0" y="500.0" width="596.0" height="44.0" rx="9" fill="#F8CECC" stroke="#B85450" stroke-width="1.6"/>
+<text x="998.0" y="525.6" font-size="11.5" font-weight="400" fill="#15202B" text-anchor="middle">Local-only ⇒ chặn cloud, cho phép cục bộ + self-hosted — lỗi rõ ràng</text>
+<rect x="60.0" y="618.0" width="168.0" height="60.0" rx="9" fill="#FFF2CC" stroke="#D6B656" stroke-width="1.6"/>
+<text x="144.0" y="644.9" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">Qwen cục bộ</text>
+<text x="144.0" y="657.7" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">(fallback cuối)</text>
+<rect x="244.0" y="618.0" width="168.0" height="60.0" rx="9" fill="#FFF2CC" stroke="#D6B656" stroke-width="1.6"/>
+<text x="328.0" y="638.4" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">Self-hosted /v1</text>
+<text x="328.0" y="651.3" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">Ollama · vLLM ·</text>
+<text x="328.0" y="664.1" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">llama.cpp · LM Studio</text>
+<rect x="428.0" y="618.0" width="168.0" height="60.0" rx="9" fill="#FFF2CC" stroke="#D6B656" stroke-width="1.6"/>
+<text x="512.0" y="644.9" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">Groq (cloud)</text>
+<text x="512.0" y="657.7" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">cần khóa API</text>
+<rect x="612.0" y="618.0" width="168.0" height="60.0" rx="9" fill="#FFF2CC" stroke="#D6B656" stroke-width="1.6"/>
+<text x="696.0" y="644.9" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">Gemini (cloud)</text>
+<text x="696.0" y="657.7" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">cần khóa API</text>
+<path d="M846.0,601.0 a110.0,9.0 0 0 0 220.0,0 v78.0 a110.0,9.0 0 0 1 -220.0,0 z" fill="#EDEDED" stroke="#5A5A5A" stroke-width="1.6"/>
+<ellipse cx="956.0" cy="601.0" rx="110.0" ry="9.0" fill="#F0F0F0" stroke="#5A5A5A" stroke-width="1.6"/>
+<text x="956.0" y="641.2" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">SQLite + uploads + artifacts</text>
+<text x="956.0" y="654.6" font-size="11.0" font-weight="400" fill="#15202B" text-anchor="middle">(trên server)</text>
+<rect x="1096.0" y="596.0" width="224.0" height="88.0" rx="9" fill="#F8CECC" stroke="#B85450" stroke-width="1.6"/>
+<text x="1208.0" y="630.4" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">Kho khóa qua keyring</text>
+<text x="1208.0" y="643.3" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">trên máy chủ chạy WebApp</text>
+<text x="1208.0" y="656.1" font-size="10.5" font-weight="400" fill="#15202B" text-anchor="middle">(không ghi khóa thô ra file)</text>
+<rect x="40.0" y="716.0" width="1280.0" height="48.0" rx="9" fill="#FFF2CC" stroke="#D6B656" stroke-width="1.6"/>
+<text x="680.0" y="743.6" font-size="11.5" font-weight="400" fill="#15202B" text-anchor="middle">WebApp là ứng dụng chạy trên server — KHÔNG có Tauri shell, UI gateway, trình chọn runtime hay runtime.json (các phần đó thuộc riêng DesktopApp)</text>
+</svg>

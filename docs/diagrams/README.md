@@ -4,7 +4,22 @@ Editable Draw.io sources + publication SVGs for the architecture documented in
 [`../ARCHITECTURE.md`](../ARCHITECTURE.md) and [`../ARCHITECTURE-DIAGRAMS.md`](../ARCHITECTURE-DIAGRAMS.md).
 Every diagram reflects the **current implementation** (grounded in source), not an idealized design.
 
-## Files
+## WebApp diagram set (tiếng Việt)
+
+Bộ sơ đồ **WebApp hiện tại** (Model Registry/Router · Local-only · khóa API ·
+chính sách URL), nhãn tiếng Việt, thẳng hàng với bộ sơ đồ DesktopApp
+(`SmartDocs-Agent-DesktopApp/docs/diagrams/`) ở các phần dùng chung — không chứa
+khái niệm desktop-only (Tauri, UI gateway, runtime selector, runtime.json).
+Nguồn sinh: `build_webapp_diagrams.py` (chạy `python3 build_webapp_diagrams.py`
+để tạo lại cả `.drawio` + `.svg`).
+
+| # | Sơ đồ | Editable | Publication |
+|---|-------|----------|-------------|
+| W1 | Kiến trúc tổng thể WebApp | `webapp-overall-architecture.drawio` | `webapp-overall-architecture.svg` |
+| W2 | Model Registry & Router theo tác vụ | `webapp-model-routing.drawio` | `webapp-model-routing.svg` |
+| W3 | Local-only · khóa API · chính sách URL | `webapp-privacy-local-only.drawio` | `webapp-privacy-local-only.svg` |
+
+## Files (backend chung — nhãn tiếng Anh)
 
 | # | Diagram | Editable | Publication |
 |---|---------|----------|-------------|
