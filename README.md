@@ -245,6 +245,19 @@ and per-task model selection with an optional explicit fallback model. A cloud
 model is never routed while Local-only is enabled, and explicit routes have no
 silent cross-provider fallback.
 
+For large models the app is a **client**: the model runs on the server you
+point it at (Ollama / vLLM / llama.cpp / LM Studio-style OpenAI-compatible
+endpoints — a LAN GPU box or a private server) and Settings → AI models needs
+only the base URL, model name, optional API key, context limit and timeout.
+The app never downloads model weights and does not manage GPU runtimes. The
+connection test prefers the server's read-only `/v1/models` list (also used
+to suggest model names) and falls back to a minimal 1-token chat completion
+for servers without it; results are reported as Connected / Unavailable /
+Timeout / Authentication failed / Model not found / Incompatible / Context
+insufficient / Blocked by URL security policy. The SmartDocs DesktopApp
+ships this same Settings → AI models UI; only runtime management (bundled
+core, runtime selector, `runtime.json`) is desktop-only.
+
 ## Running tests
 
 ```bash
